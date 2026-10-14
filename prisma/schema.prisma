@@ -1,0 +1,122 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. Catálogo TCAC (Tabla de Composición de Alimentos Colombianos)
+model AlimentoTCAC {
+  id                            Int                      @id @default(autoincrement())
+  codigo_icbf                   String?                  @unique
+  nombre                        String
+  grupo_alimento                String
+  porcentaje_comestible         Float
+  energia_kcal                  Float
+  proteina_g                    Float
+  grasa_g                       Float
+  carbohidratos_g               Float
+  hierro_mg                     Float
+  calcio_mg                     Float
+  zinc_mg                       Float
+  sodio_mg                      Float    @default(0)
+  vitamina_a_rae                Float
+  presentacion_comercial_gramos Float
+  tipo_empaque                  String
+  costo_unidad_compra           Float    @default(0)
+  minutaDetalles                MinutaDetalle[]
+  ingredientePreparacions       IngredientePreparacion[]
+
+  @@map("alimentos_tcac")
+}
+
+// 2. Metas RIEN por Grupo Etario y Tiempo de Comida
+model MetaRIEN {
+  id                Int      @id @default(autoincrement())
+  grupo_poblacional String
+  tiempo_comida     String
+  kcal_meta         Float
+  proteina_meta     Float
+  hierro_meta       Float
+  vitamina_a_meta   Float
+  minutas           Minuta[]
+
+  @@map("metas_rien")
+}
+
+// 3. Minuta Maestra
+model Minuta {
+  id             Int             @id @default(autoincrement())
+  nombre         String
+  meta_rien_id   Int
+  metaRien       MetaRIEN        @relation(fields: [meta_rien_id], references: [id])
+  modalidad      String
+  creado_en      DateTime        @default(now())
+  actualizado_en DateTime        @updatedAt
+  detalles       MinutaDetalle[]
+
+  @@map("minutas")
+}
+
+// 4. Detalle de la Minuta (Ingredientes por tiempo de comida)
+model MinutaDetalle {
+  id           Int          @id @default(autoincrement())
+  minuta_id    Int
+  minuta       Minuta       @relation(fields: [minuta_id], references: [id], onDelete: Cascade)
+  alimento_id  Int
+  alimento     AlimentoTCAC @relation(fields: [alimento_id], references: [id])
+  gramaje_neto Float
+
+  @@map("minuta_detalles")
+}
+
+// 5. Contratos y Unidades de Atención (Para Compras)
+model UnidadAtencion {
+  id                   Int    @id @default(autoincrement())
+  nombre               String
+  regional             String
+  centro_zonal         String
+  numero_beneficiarios Int
+  dias_atencion_mes    Int    @default(20)
+
+  @@map("unidades_atencion")
+}
+
+// 6. Ciclo de Men�s
+model GrupoEtario {
+  id     Int    @id @default(autoincrement())
+  nombre String // "1 a 2 a�os", "3 a 5 a�os"
+  menus  Menu[]
+}
+
+model Menu {
+  id              Int           @id @default(autoincrement())
+  numero_dia      Int // 1 to 25
+  grupo_etario_id Int
+  grupoEtario     GrupoEtario   @relation(fields: [grupo_etario_id], references: [id])
+  preparaciones   Preparacion[]
+}
+
+model Preparacion {
+  id            Int                      @id @default(autoincrement())
+  nombre        String // "PAN REDONDO CON MANTEQUILLA"
+  tiempo_comida String // "REFRIGERIO MA�ANA", "ALMUERZO", "REFRIGERIO TARDE"
+  menu_id       Int
+  menu          Menu                     @relation(fields: [menu_id], references: [id], onDelete: Cascade)
+  ingredientes  IngredientePreparacion[]
+}
+
+model IngredientePreparacion {
+  id             Int          @id @default(autoincrement())
+  preparacion_id Int
+  preparacion    Preparacion  @relation(fields: [preparacion_id], references: [id], onDelete: Cascade)
+  alimento_id    Int
+  alimento       AlimentoTCAC @relation(fields: [alimento_id], references: [id])
+  peso_bruto     Float
+  peso_neto      Float
+  costo_unidad_compra Float?
+  sodio_mg_excel      Float?
+  costo_unitario_excel Float?
+}
