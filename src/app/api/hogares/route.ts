@@ -37,7 +37,7 @@ export async function GET(request: Request) {
           select: { beneficiarios: true },
         },
         beneficiarios: {
-          select: { id: true, estado: true, alergias: true },
+          select: { id: true, estado: true, alergias: true, fecha_nacimiento: true },
         },
       },
       orderBy: { nombre: 'asc' },
@@ -113,6 +113,7 @@ export async function PUT(request: Request) {
             id: true,
             estado: true,
             alergias: true,
+            fecha_nacimiento: true,
           },
         },
       },

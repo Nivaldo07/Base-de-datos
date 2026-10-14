@@ -20,6 +20,8 @@ import {
   FileText,
   Sparkles,
   Pencil,
+  Baby,
+  Smile,
 } from 'lucide-react';
 import { calcularEdadICBF } from '@/lib/ageCalculator';
 import CarnetNino from './CarnetNino';
@@ -355,53 +357,111 @@ export default function HogaresTab() {
     (n.acudiente || '').toLowerCase().includes(searchNino.toLowerCase())
   );
 
-  // Estadísticas globales
-  const totalBeneficiarios = hogares.reduce((acc, h) => acc + (h._count?.beneficiarios || 0), 0);
-  const ninosConAlergias = ninos.filter((n) => n.alergias && n.alergias.trim() !== '' && n.alergias.toLowerCase() !== 'ninguna').length;
+  // Estadísticas globales (Todas las UDS)
+  const statsGlobales = React.useMemo(() => {
+    let totalNinos = 0;
+    let menores3 = 0;
+    let mayores3 = 0;
+
+    for (const hogar of hogares) {
+      const beneficiarios = hogar.beneficiarios || [];
+      totalNinos += hogar._count?.beneficiarios || beneficiarios.length;
+      for (const b of beneficiarios) {
+        if (b.fecha_nacimiento) {
+          const edad = calcularEdadICBF(b.fecha_nacimiento);
+          if (edad.anios < 3) {
+            menores3++;
+          } else {
+            mayores3++;
+          }
+        }
+      }
+    }
+
+    return { totalNinos, menores3, mayores3 };
+  }, [hogares]);
+
+  // Estadísticas de la UDS Seleccionada
+  const statsUdsActual = React.useMemo(() => {
+    let menores3 = 0;
+    let mayores3 = 0;
+    for (const nino of ninos) {
+      if (nino.fecha_nacimiento) {
+        const edad = calcularEdadICBF(nino.fecha_nacimiento);
+        if (edad.anios < 3) menores3++;
+        else mayores3++;
+      }
+    }
+    return {
+      total: ninos.length,
+      menores3,
+      mayores3,
+    };
+  }, [ninos]);
 
   return (
     <div className="space-y-6">
       
-      {/* 1. TARJETAS DE INDICADORES (KPIS) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 1. TARJETAS DE INDICADORES (KPIS) - TOTAL DE TODAS LAS UDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center gap-3">
           <div className="p-3 bg-emerald-100 text-emerald-700 rounded-xl">
-            <Building className="w-6 h-6" />
+            <Building className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-xs text-slate-500 font-medium">Hogares HCB (UDS)</span>
-            <p className="text-xl font-bold text-slate-800">{hogares.length}</p>
+            <span className="text-[11px] text-slate-500 font-medium">Hogares HCB (UDS)</span>
+            <p className="text-lg font-black text-slate-800">{hogares.length}</p>
           </div>
         </div>
 
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center gap-3">
           <div className="p-3 bg-blue-100 text-blue-700 rounded-xl">
-            <Users className="w-6 h-6" />
+            <Users className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-xs text-slate-500 font-medium">Beneficiarios Totales</span>
-            <p className="text-xl font-bold text-slate-800">{totalBeneficiarios}</p>
+            <span className="text-[11px] text-slate-500 font-medium">Total Niños (Todas UDS)</span>
+            <p className="text-lg font-black text-slate-800">{statsGlobales.totalNinos}</p>
           </div>
         </div>
 
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center gap-3">
-          <div className="p-3 bg-rose-100 text-rose-700 rounded-xl">
-            <ShieldAlert className="w-6 h-6" />
+          <div className="p-3 bg-sky-100 text-sky-700 rounded-xl">
+            <Baby className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-xs text-slate-500 font-medium">Alergias en UDS Actual</span>
-            <p className="text-xl font-bold text-rose-700">{ninosConAlergias}</p>
+            <span className="text-[11px] text-slate-500 font-medium">Menores de 3 Años (&lt; 3)</span>
+            <p className="text-lg font-black text-sky-700">
+              {statsGlobales.menores3}{' '}
+              <span className="text-[10px] font-normal text-slate-400">
+                ({statsGlobales.totalNinos > 0 ? Math.round((statsGlobales.menores3 / statsGlobales.totalNinos) * 100) : 0}%)
+              </span>
+            </p>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center gap-3">
+          <div className="p-3 bg-purple-100 text-purple-700 rounded-xl">
+            <Smile className="w-5 h-5" />
+          </div>
           <div>
-            <span className="text-xs text-slate-500 font-medium">Gestión de Hogares</span>
-            <p className="text-xs font-bold text-slate-700">Modalidad HCB ICBF</p>
+            <span className="text-[11px] text-slate-500 font-medium">Mayores de 3 Años (&ge; 3)</span>
+            <p className="text-lg font-black text-purple-700">
+              {statsGlobales.mayores3}{' '}
+              <span className="text-[10px] font-normal text-slate-400">
+                ({statsGlobales.totalNinos > 0 ? Math.round((statsGlobales.mayores3 / statsGlobales.totalNinos) * 100) : 0}%)
+              </span>
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between sm:col-span-2 lg:col-span-1">
+          <div>
+            <span className="text-[11px] text-slate-500 font-medium">Nuevo Registro</span>
+            <p className="text-xs font-bold text-slate-700">Crear Hogar HCB</p>
           </div>
           <button
             onClick={() => setShowHogarModal(true)}
-            className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-xs transition-colors"
+            className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-2 rounded-lg text-xs font-semibold shadow-xs transition-colors shrink-0"
           >
             <Plus className="w-4 h-4" />
             Nueva UDS
@@ -448,6 +508,17 @@ export default function HogaresTab() {
                 const count = hogar._count?.beneficiarios || 0;
                 const cupo = hogar.cupo_aprobado || 14;
 
+                const beneficiariosHogar = hogar.beneficiarios || [];
+                let menores3Hogar = 0;
+                let mayores3Hogar = 0;
+                for (const b of beneficiariosHogar) {
+                  if (b.fecha_nacimiento) {
+                    const edad = calcularEdadICBF(b.fecha_nacimiento);
+                    if (edad.anios < 3) menores3Hogar++;
+                    else mayores3Hogar++;
+                  }
+                }
+
                 return (
                   <div
                     key={hogar.id}
@@ -472,7 +543,16 @@ export default function HogaresTab() {
                       </span>
                     </div>
 
-                    <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                    <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                      <span className="px-1.5 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200 text-[10px] font-bold" title="Menores de 3 años">
+                        &lt; 3a: <strong>{menores3Hogar}</strong>
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-800 border border-purple-200 text-[10px] font-bold" title="Mayores de 3 años">
+                        &ge; 3a: <strong>{mayores3Hogar}</strong>
+                      </span>
+                    </div>
+
+                    <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
                       <span className="flex items-center gap-1 truncate max-w-[170px]">
                         <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
                         {hogar.direccion || 'Sin dirección'}
@@ -534,6 +614,47 @@ export default function HogaresTab() {
                     <UserPlus className="w-4 h-4" />
                     Vincular Niño/a
                   </button>
+                </div>
+              </div>
+
+              {/* Resumen etario de la UDS Seleccionada */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-slate-50/80 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 bg-blue-100 text-blue-800 rounded-lg shrink-0">
+                    <Users className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Total en esta UDS</span>
+                    <strong className="text-sm font-black text-slate-900">{statsUdsActual.total} niños/as</strong>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 bg-sky-100 text-sky-800 rounded-lg shrink-0">
+                    <Baby className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Menores de 3 Años (&lt; 3a)</span>
+                    <strong className="text-sm font-black text-sky-700">
+                      {statsUdsActual.menores3} niños/as{' '}
+                      <span className="text-[10px] font-normal text-slate-400">
+                        ({statsUdsActual.total > 0 ? Math.round((statsUdsActual.menores3 / statsUdsActual.total) * 100) : 0}%)
+                      </span>
+                    </strong>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 bg-purple-100 text-purple-800 rounded-lg shrink-0">
+                    <Smile className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Mayores de 3 Años (&ge; 3a)</span>
+                    <strong className="text-sm font-black text-purple-700">
+                      {statsUdsActual.mayores3} niños/as{' '}
+                      <span className="text-[10px] font-normal text-slate-400">
+                        ({statsUdsActual.total > 0 ? Math.round((statsUdsActual.mayores3 / statsUdsActual.total) * 100) : 0}%)
+                      </span>
+                    </strong>
+                  </div>
                 </div>
               </div>
 
