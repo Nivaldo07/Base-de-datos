@@ -11,7 +11,6 @@ import {
   FileText,
   CheckCircle,
   XCircle,
-  AlertCircle,
   Filter,
   Search,
   DollarSign,
@@ -21,32 +20,31 @@ import {
   Info,
   ChevronRight,
   Eye,
+  Baby,
+  Smile,
+  Printer,
+  Edit3,
+  Check,
+  PackageCheck,
+  AlertTriangle,
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import {
+  generarExcelProyeccionYPlanilla,
+  DiaProyeccionExcel,
+  ItemPlanillaExcel,
+  MetadatosPlanillaExcel,
+} from '@/lib/comprasExcelGenerator';
+import {
+  generarPDFPlanillaEntregaOficialUDS,
+  generarPDFListaCompras,
+} from '@/lib/pdfGenerator';
+import { calcularEdadICBF } from '@/lib/ageCalculator';
 
 interface DiaSemanaConfig {
   diaSemana: string;
   numeroDiaCiclo: number;
   activo: boolean;
   motivoAnulacion: string;
-}
-
-interface ItemProyeccionCompra {
-  alimentoId: number;
-  codigo_icbf: string;
-  nombre: string;
-  grupo_alimento: string;
-  presentacion_comercial_gramos: number;
-  tipo_empaque: string;
-  costo_unidad_compra: number;
-  pesoBrutoPorNinoSemana: number; // gramos brutos por ración en toda la semana activa
-  totalBrutoGramos: number; // pesoBrutoPorNinoSemana * totalBeneficiarios
-  totalBrutoKilos: number; // totalBrutoGramos / 1000
-  unidadesComerciales: number; // ceil(totalBrutoGramos / presentacion_comercial_gramos)
-  costoSubtotal: number; // unidadesComerciales * costo_unidad_compra
-  preparacionesUsadas: string[];
 }
 
 const SEMANAS_PRESET = [
@@ -63,51 +61,71 @@ export default function ComprasTab() {
   // Datos maestros
   const [hogares, setHogares] = useState<any[]>([]);
   const [gruposEtarios, setGruposEtarios] = useState<any[]>([]);
-  const [selectedGrupoId, setSelectedGrupoId] = useState<number>(1);
   const [menusCiclo, setMenusCiclo] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Configuración de la semana
-  const [semanaSeleccionadaId, setSemanaSeleccionadaId] = useState<number>(1);
-  const [diasConfig, setDiasConfig] = useState<DiaSemanaConfig[]>([
-    { diaSemana: 'Lunes', numeroDiaCiclo: 1, activo: true, motivoAnulacion: '' },
-    { diaSemana: 'Martes', numeroDiaCiclo: 2, activo: true, motivoAnulacion: '' },
-    { diaSemana: 'Miércoles', numeroDiaCiclo: 3, activo: true, motivoAnulacion: '' },
-    { diaSemana: 'Jueves', numeroDiaCiclo: 4, activo: true, motivoAnulacion: '' },
-    { diaSemana: 'Viernes', numeroDiaCiclo: 5, activo: true, motivoAnulacion: '' },
-  ]);
-
-  // Modo de visualización: 'global' (Todas las UDS) o 'uds' (Individual)
-  const [modoVista, setModoVista] = useState<'global' | 'uds'>('global');
+  // Modo de visualización: 'uds' (Individual) o 'global' (Todas las UDS)
+  const [modoVista, setModoVista] = useState<'uds' | 'global'>('uds');
   const [selectedUdsId, setSelectedUdsId] = useState<number | null>(null);
 
-  // Filtros de búsqueda en la tabla de compras
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedGrupoFiltro, setSelectedGrupoFiltro] = useState<string>('TODOS');
+  // Configuración de la semana (por defecto Semana 5: Días 21 a 25)
+  const [semanaSeleccionadaId, setSemanaSeleccionadaId] = useState<number>(5);
+  const [diasConfig, setDiasConfig] = useState<DiaSemanaConfig[]>([
+    { diaSemana: 'Lunes', numeroDiaCiclo: 21, activo: true, motivoAnulacion: '' },
+    { diaSemana: 'Martes', numeroDiaCiclo: 22, activo: true, motivoAnulacion: '' },
+    { diaSemana: 'Miércoles', numeroDiaCiclo: 23, activo: true, motivoAnulacion: '' },
+    { diaSemana: 'Jueves', numeroDiaCiclo: 24, activo: true, motivoAnulacion: '' },
+    { diaSemana: 'Viernes', numeroDiaCiclo: 25, activo: true, motivoAnulacion: '' },
+  ]);
 
-  // 1. Cargar Hogares (UDS) y Grupos Etarios
+  // Sub-pestaña activa dentro del módulo de compras
+  const [subTabActiva, setSubTabActiva] = useState<string>('planilla');
+
+  // Sobrescritura manual opcional de niños por grupo de edad para la UDS actual
+  const [overrideMenores3, setOverrideMenores3] = useState<number | null>(null);
+  const [overrideMayores3, setOverrideMayores3] = useState<number | null>(null);
+
+  // Metadatos institucionales oficiales ICBF (Editables)
+  const [showEditMetaModal, setShowEditMetaModal] = useState(false);
+  const [metaInstitucional, setMetaInstitucional] = useState({
+    eas: 'ASOCIACION DE FAMILIA DE HCB DE CAIMITO-SUCRE',
+    nit: '8230002828 - 6',
+    contrato: '70005732024',
+    municipio: 'CAIMITO-SUCRE',
+    fechaEntrega: '26 del mes 09 del año 2026',
+    fechaInicio: '28 de septiembre',
+    fechaFin: '2 de octubre de 2026',
+  });
+
+  // Filtros de búsqueda
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // 1. Cargar Hogares (UDS), Grupos Etarios y Menús
   useEffect(() => {
-    const fetchCatalogos = async () => {
+    const fetchData = async () => {
       try {
         setLoading(true);
-        const [resHogares, resGrupos] = await Promise.all([
+        const [resHogares, resGrupos, resMenus] = await Promise.all([
           fetch('/api/hogares'),
           fetch('/api/grupos-etarios'),
+          fetch('/api/menus'),
         ]);
 
         const dataHogares = await resHogares.json();
         const dataGrupos = await resGrupos.json();
+        const dataMenus = await resMenus.json();
 
-        if (Array.isArray(dataHogares)) {
+        if (Array.isArray(dataHogares) && dataHogares.length > 0) {
           setHogares(dataHogares);
-          if (dataHogares.length > 0) {
-            setSelectedUdsId(dataHogares[0].id);
-          }
+          setSelectedUdsId(dataHogares[0].id);
         }
 
-        if (Array.isArray(dataGrupos) && dataGrupos.length > 0) {
+        if (Array.isArray(dataGrupos)) {
           setGruposEtarios(dataGrupos);
-          setSelectedGrupoId(dataGrupos[0].id);
+        }
+
+        if (Array.isArray(dataMenus)) {
+          setMenusCiclo(dataMenus);
         }
       } catch (error) {
         console.error('Error cargando catálogos de compras:', error);
@@ -116,28 +134,10 @@ export default function ComprasTab() {
       }
     };
 
-    fetchCatalogos();
+    fetchData();
   }, []);
 
-  // 2. Cargar Menús del Grupo Etario seleccionado
-  useEffect(() => {
-    const fetchMenus = async () => {
-      if (!selectedGrupoId) return;
-      try {
-        const res = await fetch(`/api/menus?grupoId=${selectedGrupoId}`);
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setMenusCiclo(data);
-        }
-      } catch (error) {
-        console.error('Error cargando menús del ciclo:', error);
-      }
-    };
-
-    fetchMenus();
-  }, [selectedGrupoId]);
-
-  // Cambiar semana preconfigurada (Semana 1..5)
+  // Manejo de cambio de semana preconfigurada (Semana 1..5)
   const handleSelectSemanaPreset = (semanaId: number) => {
     setSemanaSeleccionadaId(semanaId);
     const preset = SEMANAS_PRESET.find((s) => s.id === semanaId);
@@ -153,7 +153,7 @@ export default function ComprasTab() {
     );
   };
 
-  // Toggle de un día activo/anulado (festivo o no laboral)
+  // Toggle de día activo/anulado (festivo o no laboral)
   const handleToggleDiaActivo = (index: number) => {
     setDiasConfig((prev) => {
       const next = [...prev];
@@ -168,767 +168,993 @@ export default function ComprasTab() {
     });
   };
 
-  // Cambiar el número de día del ciclo de un día específico
-  const handleChangeDiaCiclo = (index: number, nuevoDiaCiclo: number) => {
-    setDiasConfig((prev) => {
-      const next = [...prev];
-      next[index] = {
-        ...next[index],
-        numeroDiaCiclo: nuevoDiaCiclo,
-      };
-      return next;
-    });
-  };
+  // UDS Seleccionada actualmente
+  const udsSeleccionada = hogares.find((h) => h.id === selectedUdsId) || hogares[0];
 
-  // Cambiar motivo de anulación
-  const handleChangeMotivoAnulacion = (index: number, motivo: string) => {
-    setDiasConfig((prev) => {
-      const next = [...prev];
-      next[index] = {
-        ...next[index],
-        motivoAnulacion: motivo,
-      };
-      return next;
-    });
-  };
-
-  // Cálculo de beneficiarios según la vista seleccionada
-  const udsSeleccionada = hogares.find((h) => h.id === selectedUdsId);
-
-  const totalBeneficiariosActivos = useMemo(() => {
-    if (modoVista === 'uds') {
-      return udsSeleccionada?.cupo_aprobado || udsSeleccionada?.numero_beneficiarios || 14;
-    }
-    // Modo Global: Suma de los cupos de todas las UDS
-    return hogares.reduce(
-      (acc, h) => acc + (h.cupo_aprobado || h.numero_beneficiarios || 14),
-      0
-    );
-  }, [modoVista, udsSeleccionada, hogares]);
-
-  const diasHabilesActivosCount = useMemo(() => {
-    return diasConfig.filter((d) => d.activo).length;
-  }, [diasConfig]);
-
-  // CÁLCULO PRINCIPAL: Proyección de compras de víveres
-  const proyeccionCompras = useMemo<ItemProyeccionCompra[]>(() => {
-    const diasActivos = diasConfig.filter((d) => d.activo);
-    if (diasActivos.length === 0 || totalBeneficiariosActivos <= 0) {
-      return [];
+  // Cálculo demográfico real de niños menores y mayores de 3 años para la UDS
+  const demografiaUds = useMemo(() => {
+    if (!udsSeleccionada) {
+      return { menores3: 4, mayores3: 5, total: 9, esAuto: false };
     }
 
-    const mapaAlimentos = new Map<
-      number,
+    const beneficiarios = udsSeleccionada.beneficiarios || [];
+    let countMenores3 = 0;
+    let countMayores3 = 0;
+
+    for (const b of beneficiarios) {
+      if (b.fecha_nacimiento) {
+        const edad = calcularEdadICBF(b.fecha_nacimiento);
+        if (edad.anios < 3) countMenores3++;
+        else countMayores3++;
+      }
+    }
+
+    // Si no hay niños registrados con fecha, usar fallback basado en cupo aprobado (ej. 4 y 5 para cupo 9, o 6 y 8 para cupo 14)
+    if (beneficiarios.length === 0) {
+      const cupo = udsSeleccionada.cupo_aprobado || udsSeleccionada.numero_beneficiarios || 9;
+      countMenores3 = Math.floor(cupo * 0.45);
+      countMayores3 = cupo - countMenores3;
+    }
+
+    const m3 = overrideMenores3 !== null ? overrideMenores3 : countMenores3;
+    const my3 = overrideMayores3 !== null ? overrideMayores3 : countMayores3;
+
+    return {
+      menores3: m3,
+      mayores3: my3,
+      total: m3 + my3,
+      esAuto: overrideMenores3 === null && overrideMayores3 === null,
+      conteoRealMenores3: countMenores3,
+      conteoRealMayores3: countMayores3,
+    };
+  }, [udsSeleccionada, overrideMenores3, overrideMayores3]);
+
+  // Demografía consolidada de TODAS las UDS (para el modo Global)
+  const demografiaGlobal = useMemo(() => {
+    let totMenores = 0;
+    let totMayores = 0;
+
+    for (const h of hogares) {
+      const beneficiarios = h.beneficiarios || [];
+      let m = 0;
+      let my = 0;
+      for (const b of beneficiarios) {
+        if (b.fecha_nacimiento) {
+          const edad = calcularEdadICBF(b.fecha_nacimiento);
+          if (edad.anios < 3) m++;
+          else my++;
+        }
+      }
+      if (beneficiarios.length === 0) {
+        const cupo = h.cupo_aprobado || h.numero_beneficiarios || 14;
+        m = Math.floor(cupo * 0.45);
+        my = cupo - m;
+      }
+      totMenores += m;
+      totMayores += my;
+    }
+
+    return {
+      menores3: totMenores,
+      mayores3: totMayores,
+      total: totMenores + totMayores,
+    };
+  }, [hogares]);
+
+  // Demografía activa según el modo seleccionado
+  const demografiaActiva = modoVista === 'uds' ? demografiaUds : demografiaGlobal;
+
+  // CÁLCULO PRINCIPAL: Desglose Diario y Planilla de 5 Días
+  const { diasCalculados, consolidadoPlanilla, totalGramosSemana, listaAlimentosUnicos } = useMemo(() => {
+    const idGrupoMenores = gruposEtarios.find((g) => g.nombre.includes('1') || g.id === 1)?.id || 1;
+    const idGrupoMayores = gruposEtarios.find((g) => g.nombre.includes('3') || g.id === 2)?.id || 2;
+
+    const diasResult: DiaProyeccionExcel[] = [];
+    const mapaProductosPlanilla = new Map<
+      string,
       {
-        alim: any;
-        pesoBrutoTotalNino: number;
-        costoUnidad: number;
-        preparacionesSet: Set<string>;
+        producto: string;
+        totalGramos: number;
+        unidad: string;
+        presentacionGramos: number;
+        costoUnidadCompra: number;
+        tipoEmpaque: string;
+        grupoAlimento: string;
       }
     >();
 
-    for (const diaCfg of diasActivos) {
-      const menuDelDia = menusCiclo.find((m) => m.numero_dia === diaCfg.numeroDiaCiclo);
-      if (!menuDelDia || !Array.isArray(menuDelDia.preparaciones)) continue;
+    let acumuladorGramosTotal = 0;
 
-      for (const prep of menuDelDia.preparaciones) {
-        if (!Array.isArray(prep.ingredientes)) continue;
+    for (const diaCfg of diasConfig) {
+      // Buscar menú de menores y menú de mayores para este día del ciclo
+      const menuMenores = menusCiclo.find(
+        (m) => m.numero_dia === diaCfg.numeroDiaCiclo && m.grupo_etario_id === idGrupoMenores
+      );
+      const menuMayores = menusCiclo.find(
+        (m) => m.numero_dia === diaCfg.numeroDiaCiclo && m.grupo_etario_id === idGrupoMayores
+      );
 
-        for (const ing of prep.ingredientes) {
-          const alim = ing.alimento;
-          if (!alim) continue;
+      // Mapa para unir ingredientes de ambos grupos en este día
+      const mapaIngredientesDia = new Map<
+        string,
+        {
+          nombre: string;
+          gMenor: number;
+          gMayor: number;
+          totalMenor: number;
+          totalMayor: number;
+          totalDia: number;
+          tiempo: string;
+          presentacionGramos: number;
+          costoUnidadCompra: number;
+          tipoEmpaque: string;
+          grupoAlimento: string;
+        }
+      >();
 
-          const bruto = Number(ing.peso_bruto) || 0;
-          const costoUnitario =
-            Number(ing.costo_unidad_compra) ||
-            Number(ing.costo_unitario_excel) ||
-            Number(alim.costo_unidad_compra) ||
-            0;
-
-          if (!mapaAlimentos.has(alim.id)) {
-            mapaAlimentos.set(alim.id, {
-              alim,
-              pesoBrutoTotalNino: 0,
-              costoUnidad: costoUnitario,
-              preparacionesSet: new Set(),
-            });
+      // Procesar ingredientes del grupo de menores
+      if (menuMenores && Array.isArray(menuMenores.preparaciones)) {
+        for (const prep of menuMenores.preparaciones) {
+          if (!Array.isArray(prep.ingredientes)) continue;
+          for (const ing of prep.ingredientes) {
+            const alim = ing.alimento;
+            if (!alim) continue;
+            const clave = alim.nombre.trim();
+            const g = Number(ing.peso_bruto) || 0;
+            const item = mapaIngredientesDia.get(clave) || {
+              nombre: alim.nombre,
+              gMenor: 0,
+              gMayor: 0,
+              totalMenor: 0,
+              totalMayor: 0,
+              totalDia: 0,
+              tiempo: prep.tiempo_comida || 'ALMUERZO',
+              presentacionGramos: alim.presentacion_comercial_gramos || 1000,
+              costoUnidadCompra: Number(ing.costo_unidad_compra) || Number(alim.costo_unidad_compra) || 0,
+              tipoEmpaque: alim.tipo_empaque || 'kg',
+              grupoAlimento: alim.grupo_alimento || 'Otros',
+            };
+            item.gMenor = Math.max(item.gMenor, g);
+            mapaIngredientesDia.set(clave, item);
           }
+        }
+      }
 
-          const entry = mapaAlimentos.get(alim.id)!;
-          entry.pesoBrutoTotalNino += bruto;
-          if (costoUnitario > 0 && entry.costoUnidad === 0) {
-            entry.costoUnidad = costoUnitario;
+      // Procesar ingredientes del grupo de mayores
+      if (menuMayores && Array.isArray(menuMayores.preparaciones)) {
+        for (const prep of menuMayores.preparaciones) {
+          if (!Array.isArray(prep.ingredientes)) continue;
+          for (const ing of prep.ingredientes) {
+            const alim = ing.alimento;
+            if (!alim) continue;
+            const clave = alim.nombre.trim();
+            const g = Number(ing.peso_bruto) || 0;
+            const item = mapaIngredientesDia.get(clave) || {
+              nombre: alim.nombre,
+              gMenor: 0,
+              gMayor: 0,
+              totalMenor: 0,
+              totalMayor: 0,
+              totalDia: 0,
+              tiempo: prep.tiempo_comida || 'ALMUERZO',
+              presentacionGramos: alim.presentacion_comercial_gramos || 1000,
+              costoUnidadCompra: Number(ing.costo_unidad_compra) || Number(alim.costo_unidad_compra) || 0,
+              tipoEmpaque: alim.tipo_empaque || 'kg',
+              grupoAlimento: alim.grupo_alimento || 'Otros',
+            };
+            item.gMayor = Math.max(item.gMayor, g);
+            mapaIngredientesDia.set(clave, item);
           }
-          entry.preparacionesSet.add(
-            `[${diaCfg.diaSemana} - ${prep.tiempo_comida}] ${prep.nombre}`
-          );
+        }
+      }
+
+      // Si por alguna razón solo había menú para un grupo, rellenar el otro proporcionalmente
+      for (const item of mapaIngredientesDia.values()) {
+        if (item.gMenor === 0 && item.gMayor > 0) {
+          item.gMenor = Math.round(item.gMayor * 0.8 * 100) / 100;
+        } else if (item.gMayor === 0 && item.gMenor > 0) {
+          item.gMayor = Math.round(item.gMenor * 1.25 * 100) / 100;
+        }
+
+        if (diaCfg.activo) {
+          item.totalMenor = Math.round(item.gMenor * demografiaActiva.menores3 * 10) / 10;
+          item.totalMayor = Math.round(item.gMayor * demografiaActiva.mayores3 * 10) / 10;
+          item.totalDia = Math.round((item.totalMenor + item.totalMayor) * 10) / 10;
+        } else {
+          item.totalMenor = 0;
+          item.totalMayor = 0;
+          item.totalDia = 0;
+        }
+      }
+
+      const itemsDelDia = Array.from(mapaIngredientesDia.values());
+
+      diasResult.push({
+        diaSemana: diaCfg.diaSemana,
+        numeroDiaCiclo: diaCfg.numeroDiaCiclo,
+        activo: diaCfg.activo,
+        motivoAnulacion: diaCfg.motivoAnulacion,
+        items: itemsDelDia,
+      });
+
+      // Si el día está activo, acumular en la Planilla de Entrega semanal
+      if (diaCfg.activo) {
+        for (const it of itemsDelDia) {
+          const actual = mapaProductosPlanilla.get(it.nombre) || {
+            producto: it.nombre,
+            totalGramos: 0,
+            unidad: it.nombre.toLowerCase().includes('leche') || it.nombre.toLowerCase().includes('aceite') ? 'Mililitros' : 'Gramos',
+            presentacionGramos: it.presentacionGramos,
+            costoUnidadCompra: it.costoUnidadCompra,
+            tipoEmpaque: it.tipoEmpaque,
+            grupoAlimento: it.grupoAlimento,
+          };
+          actual.totalGramos = Math.round((actual.totalGramos + it.totalDia) * 10) / 10;
+          acumuladorGramosTotal += it.totalDia;
+          mapaProductosPlanilla.set(it.nombre, actual);
         }
       }
     }
 
-    const items: ItemProyeccionCompra[] = [];
-
-    for (const [alimentoId, data] of mapaAlimentos.entries()) {
-      const presGramos =
-        data.alim.presentacion_comercial_gramos > 0
-          ? data.alim.presentacion_comercial_gramos
-          : 1000;
-
-      // Demanda total = Bruto individual en la semana activa * Total de raciones
-      const totalBrutoGramos = data.pesoBrutoTotalNino * totalBeneficiariosActivos;
-      const totalBrutoKilos = totalBrutoGramos / 1000;
-
-      // Función techo reglamentaria del ICBF: Math.ceil(TotalGramos / PresentacionComercial)
-      const unidadesComerciales = Math.ceil(totalBrutoGramos / presGramos);
-      const costoSubtotal = unidadesComerciales * data.costoUnidad;
-
-      items.push({
-        alimentoId,
-        codigo_icbf: data.alim.codigo_icbf || `#${alimentoId}`,
-        nombre: data.alim.nombre,
-        grupo_alimento: data.alim.grupo_alimento || 'Varios',
-        presentacion_comercial_gramos: presGramos,
-        tipo_empaque: data.alim.tipo_empaque || 'kg',
-        costo_unidad_compra: data.costoUnidad,
-        pesoBrutoPorNinoSemana: data.pesoBrutoTotalNino,
-        totalBrutoGramos,
-        totalBrutoKilos,
-        unidadesComerciales,
-        costoSubtotal,
-        preparacionesUsadas: Array.from(data.preparacionesSet),
-      });
-    }
-
-    // Ordenar por Grupo de Alimento y luego por Nombre
-    return items.sort((a, b) =>
-      a.grupo_alimento.localeCompare(b.grupo_alimento) || a.nombre.localeCompare(b.nombre)
+    // Ordenar consolidado de la planilla alfabéticamente
+    const consolidado = Array.from(mapaProductosPlanilla.values()).sort((a, b) =>
+      a.producto.localeCompare(b.producto, 'es', { sensitivity: 'base' })
     );
-  }, [diasConfig, menusCiclo, totalBeneficiariosActivos]);
 
-  // Lista única de grupos para el filtro
-  const listaGruposAlimentos = useMemo(() => {
-    const grupos = new Set<string>();
-    proyeccionCompras.forEach((item) => grupos.add(item.grupo_alimento));
-    return Array.from(grupos).sort();
-  }, [proyeccionCompras]);
+    return {
+      diasCalculados: diasResult,
+      consolidadoPlanilla: consolidado,
+      totalGramosSemana: Math.round(acumuladorGramosTotal * 10) / 10,
+      listaAlimentosUnicos: consolidado.length,
+    };
+  }, [diasConfig, menusCiclo, gruposEtarios, demografiaActiva]);
 
-  // Filtrado de la tabla
-  const itemsFiltrados = useMemo(() => {
-    return proyeccionCompras.filter((item) => {
-      const matchSearch =
-        item.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.codigo_icbf.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.preparacionesUsadas.some((p) => p.toLowerCase().includes(searchTerm.toLowerCase()));
+  // Texto del rango del ciclo (ej. "21 - 25")
+  const textoCiclo = `${diasConfig[0]?.numeroDiaCiclo || 21} - ${diasConfig[4]?.numeroDiaCiclo || 25}`;
 
-      const matchGrupo =
-        selectedGrupoFiltro === 'TODOS' || item.grupo_alimento === selectedGrupoFiltro;
+  // Metadatos unificados para la exportación
+  const metadatosCompletos: MetadatosPlanillaExcel = useMemo(() => {
+    return {
+      eas: metaInstitucional.eas,
+      nit: metaInstitucional.nit,
+      contrato: metaInstitucional.contrato,
+      municipio: metaInstitucional.municipio,
+      nombreUds: modoVista === 'uds' ? udsSeleccionada?.nombre || 'Travesuras Infantiles' : `CONSOLIDADO GLOBAL (${hogares.length} UDS)`,
+      madreComunitaria: modoVista === 'uds' ? udsSeleccionada?.madre_comunitaria || 'Ana Acevedo' : 'Todas las Madres Comunitarias',
+      codigoUds: udsSeleccionada?.codigo_uds || 'UDS-001',
+      fechaEntrega: metaInstitucional.fechaEntrega,
+      diasCicloTexto: textoCiclo,
+      fechaInicio: metaInstitucional.fechaInicio,
+      fechaFin: metaInstitucional.fechaFin,
+      menores3: demografiaActiva.menores3,
+      mayores3: demografiaActiva.mayores3,
+      totalNinos: demografiaActiva.total,
+    };
+  }, [metaInstitucional, modoVista, udsSeleccionada, hogares.length, textoCiclo, demografiaActiva]);
 
-      return matchSearch && matchGrupo;
-    });
-  }, [proyeccionCompras, searchTerm, selectedGrupoFiltro]);
-
-  // Totales acumulados
-  const totalCostoGeneral = useMemo(() => {
-    return proyeccionCompras.reduce((acc, item) => acc + item.costoSubtotal, 0);
-  }, [proyeccionCompras]);
-
-  const totalKilosGeneral = useMemo(() => {
-    return proyeccionCompras.reduce((acc, item) => acc + item.totalBrutoKilos, 0);
-  }, [proyeccionCompras]);
-
-  // Exportar a Excel (.xlsx)
-  const handleExportExcel = () => {
-    if (proyeccionCompras.length === 0) {
-      alert('No hay datos calculados para exportar');
-      return;
-    }
-
-    const rows = proyeccionCompras.map((item) => ({
-      'Código TCAC': item.codigo_icbf,
-      'Alimento / Insumo': item.nombre,
-      'Grupo de Alimento': item.grupo_alimento,
-      'Bruto / Niño / Sem (g)': Math.round(item.pesoBrutoPorNinoSemana * 10) / 10,
-      'Demanda Total (kg)': Math.round(item.totalBrutoKilos * 100) / 100,
-      'Presentación Comercial': `${item.presentacion_comercial_gramos}g (${item.tipo_empaque})`,
-      'Empaques a Adquirir (Techo)': item.unidadesComerciales,
-      'Costo Unitario ($)': item.costo_unidad_compra,
-      'Costo Total ($)': item.costoSubtotal,
-      'Tiempos y Preparaciones': item.preparacionesUsadas.join('; '),
+  // Manejo de exportación a Excel (.xlsx)
+  const handleDescargarExcel = () => {
+    const consolidadoFinal: ItemPlanillaExcel[] = consolidadoPlanilla.map((p) => ({
+      producto: p.producto,
+      totalGramos: p.totalGramos,
+      unidad: p.unidad,
+      presentacionGramos: p.presentacionGramos,
+      empaquesSugeridos: Math.ceil(p.totalGramos / (p.presentacionGramos || 1000)),
     }));
 
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Proyección Compras ICBF');
-
-    const fileName = `Proyeccion_Compras_${modoVista === 'global' ? 'Consolidado_Todas_UDS' : udsSeleccionada?.nombre || 'UDS'}_Semana_${semanaSeleccionadaId}.xlsx`;
-    XLSX.writeFile(wb, fileName);
+    generarExcelProyeccionYPlanilla(diasCalculados, consolidadoFinal, metadatosCompletos);
   };
 
-  // Exportar Orden de Compra Oficial en PDF
-  const handleExportPDF = () => {
-    if (proyeccionCompras.length === 0) {
-      alert('No hay datos calculados para exportar');
-      return;
-    }
-
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'letter' });
-
-    // Cabecera institucional ICBF
-    doc.setFillColor(6, 78, 59); // emerald-900
-    doc.rect(0, 0, 279, 22, 'F');
-
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.text('INSTITUTO COLOMBIANO DE BIENESTAR FAMILIAR - ICBF', 14, 10);
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.text(
-      'ORDEN DE COMPRA Y CONSOLIDADO LOGÍSTICO SEMANAL DE VÍVERES Y ALIMENTOS',
-      14,
-      17
-    );
-
-    // Metadata
-    doc.setTextColor(30, 41, 59);
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-
-    const nombreUdsText =
-      modoVista === 'global'
-        ? `CONSOLIDADO GENERAL (${hogares.length} UDS ACTIVAS)`
-        : `${udsSeleccionada?.nombre} (${udsSeleccionada?.codigo_uds || 'Sin Código'})`;
-
-    doc.text(`Destino / Modalidad: ${nombreUdsText}`, 14, 30);
-    doc.text(
-      `Semana del Menú: Semana ${semanaSeleccionadaId} (${diasHabilesActivosCount} días hábiles programados)`,
-      14,
-      35
-    );
-    doc.text(
-      `Beneficiarios: ${totalBeneficiariosActivos} niños/as • Raciones: ${totalBeneficiariosActivos * diasHabilesActivosCount}`,
-      160,
-      30
-    );
-    doc.text(
-      `Total Inversión Estimada: $${totalCostoGeneral.toLocaleString('es-CO')} COP`,
-      160,
-      35
-    );
-
-    const tableData = proyeccionCompras.map((item) => [
-      item.codigo_icbf,
-      item.nombre,
-      item.grupo_alimento,
-      `${item.pesoBrutoPorNinoSemana.toFixed(1)}g`,
-      `${item.totalBrutoKilos.toFixed(2)} kg`,
-      `${item.presentacion_comercial_gramos}g (${item.tipo_empaque})`,
-      item.unidadesComerciales.toString(),
-      `$${item.costo_unidad_compra.toLocaleString('es-CO')}`,
-      `$${item.costoSubtotal.toLocaleString('es-CO')}`,
-    ]);
-
-    autoTable(doc, {
-      startY: 40,
-      head: [
-        [
-          'Cód. TCAC',
-          'Alimento / Insumo',
-          'Grupo',
-          'Bruto/Niño',
-          'Total Bruto',
-          'Presentación',
-          'A Adquirir',
-          'Costo Unit.',
-          'Costo Total',
-        ],
-      ],
-      body: tableData,
-      theme: 'grid',
-      headStyles: {
-        fillColor: [6, 78, 59],
-        textColor: [255, 255, 255],
-        fontSize: 8,
-        fontStyle: 'bold',
-        halign: 'center',
-      },
-      styles: {
-        fontSize: 7.5,
-        cellPadding: 2,
-      },
-      columnStyles: {
-        0: { halign: 'center', cellWidth: 20 },
-        1: { cellWidth: 55 },
-        2: { cellWidth: 35 },
-        3: { halign: 'right', cellWidth: 22 },
-        4: { halign: 'right', cellWidth: 24, fontStyle: 'bold' },
-        5: { halign: 'center', cellWidth: 35 },
-        6: { halign: 'center', cellWidth: 22, fontStyle: 'bold' },
-        7: { halign: 'right', cellWidth: 25 },
-        8: { halign: 'right', cellWidth: 25, fontStyle: 'bold' },
-      },
-    });
-
-    // Firmas reglamentarias
-    const finalY = (doc as any).lastAutoTable.finalY + 15;
-    if (finalY < 185) {
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.line(14, finalY + 12, 80, finalY + 12);
-      doc.text('Nutricionista Dietista EAS / ICBF', 14, finalY + 16);
-
-      doc.line(100, finalY + 12, 170, finalY + 12);
-      doc.text('Coordinador Operativo / Interventoría', 100, finalY + 16);
-
-      doc.line(190, finalY + 12, 260, finalY + 12);
-      doc.text('Proveedor Mayorista de Víveres', 190, finalY + 16);
-    }
-
-    doc.save(
-      `Orden_Compra_ICBF_${modoVista === 'global' ? 'Global' : udsSeleccionada?.nombre || 'UDS'}_Semana_${semanaSeleccionadaId}.pdf`
-    );
+  // Manejo de exportación a PDF de la Planilla Oficial
+  const handleDescargarPDFPlanilla = () => {
+    generarPDFPlanillaEntregaOficialUDS(metadatosCompletos, consolidadoPlanilla);
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center p-12 text-slate-500 space-y-3">
-        <RefreshCw className="w-8 h-8 text-emerald-600 animate-spin" />
-        <p className="text-sm font-semibold">Cargando datos de UDS y ciclo de menús...</p>
-      </div>
-    );
-  }
+  // Filtrado de la lista en la pestaña activa
+  const productosFiltradosPlanilla = useMemo(() => {
+    if (!searchTerm.trim()) return consolidadoPlanilla;
+    const term = searchTerm.toLowerCase();
+    return consolidadoPlanilla.filter((p) => p.producto.toLowerCase().includes(term));
+  }, [consolidadoPlanilla, searchTerm]);
+
+  // Índices de subpestaña seleccionada (día 0 a 4)
+  const diaSeleccionadoIndex = subTabActiva.startsWith('dia-') ? parseInt(subTabActiva.replace('dia-', '')) : null;
+  const diaSeleccionadoObj = diaSeleccionadoIndex !== null ? diasCalculados[diaSeleccionadoIndex] : null;
+
+  const productosFiltradosDia = useMemo(() => {
+    if (!diaSeleccionadoObj) return [];
+    if (!searchTerm.trim()) return diaSeleccionadoObj.items;
+    const term = searchTerm.toLowerCase();
+    return diaSeleccionadoObj.items.filter((it) => it.nombre.toLowerCase().includes(term));
+  }, [diaSeleccionadoObj, searchTerm]);
 
   return (
     <div className="space-y-6">
-      {/* 1. CABECERA PRINCIPAL */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+      {/* 1. CABECERA PRINCIPAL Y BOTONES DE EXPORTACIÓN */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="p-2 bg-emerald-100 text-emerald-800 rounded-xl">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2.5 bg-emerald-100 text-emerald-800 rounded-xl">
               <ShoppingBag className="w-6 h-6" />
-            </span>
+            </div>
             <div>
-              <h2 className="text-xl font-black text-slate-900 tracking-tight">
-                Proyección de Compras y Pedido Semanal
-              </h2>
-              <p className="text-xs text-slate-500 font-medium">
-                Cálculo automatizado de víveres por UDS y consolidado global con control de festivos y redondeo comercial reglamentario ICBF.
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-extrabold text-slate-900">
+                  Proyección de Compras y Pedidos Semanales
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  Formato Oficial ICBF
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Cálculo automatizado de víveres por ración para menores y mayores de 3 años, planilla semanal y consolidado general.
               </p>
             </div>
           </div>
         </div>
 
-        {/* Acciones de Exportación */}
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* Acciones principales de Descarga */}
+        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
           <button
-            onClick={handleExportExcel}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition-all shadow-2xs hover:scale-102"
+            onClick={() => setShowEditMetaModal(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl border border-slate-300 transition-colors shadow-2xs"
+            title="Editar Entidad, Contrato, NIT y Fechas oficiales"
           >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-            Exportar Excel (.xlsx)
+            <Edit3 className="w-3.5 h-3.5 text-slate-600" />
+            Datos Institucionales
           </button>
+
           <button
-            onClick={handleExportPDF}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-all shadow-2xs hover:scale-102"
+            onClick={handleDescargarPDFPlanilla}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-xl transition-colors shadow-xs"
           >
-            <Download className="w-4 h-4" />
-            Orden de Compra PDF
+            <Printer className="w-4 h-4 text-slate-300" />
+            Imprimir Planilla PDF
+          </button>
+
+          <button
+            onClick={handleDescargarExcel}
+            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-xs transition-colors"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
+            Descargar Excel (.xlsx)
           </button>
         </div>
       </div>
 
-      {/* 2. SELECTOR DE SEMANA Y GRUPO ETARIO */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 pb-3 border-b border-slate-100">
-          <div>
-            <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+      {/* 2. BARRA DE CONFIGURACIÓN: SELECTOR DE SEMANA Y MODO DE VISTA */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+        {/* Selector de Semana del Ciclo */}
+        <div className="md:col-span-5 bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-2">
+          <div className="flex justify-between items-center">
+            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
               <Calendar className="w-4 h-4 text-emerald-600" />
-              Selección de la Semana en el Ciclo de 25 Días
-            </h3>
-            <p className="text-[11px] text-slate-500">
-              Escoge una semana del ciclo y gestiona qué días operan o se anulan por festivos/paros.
-            </p>
+              Semana del Ciclo de Menús
+            </span>
+            <span className="text-[11px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+              Menú {textoCiclo}
+            </span>
           </div>
 
-          {/* Selector de Grupo Etario */}
-          {gruposEtarios.length > 0 && (
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-bold text-slate-600">Grupo Etario:</label>
-              <select
-                value={selectedGrupoId}
-                onChange={(e) => setSelectedGrupoId(Number(e.target.value))}
-                className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:ring-2 focus:ring-emerald-500"
+          <div className="grid grid-cols-5 gap-1.5 pt-1">
+            {SEMANAS_PRESET.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => handleSelectSemanaPreset(s.id)}
+                className={`py-2 px-1 text-center rounded-lg text-xs font-bold transition-all ${
+                  semanaSeleccionadaId === s.id
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
               >
-                {gruposEtarios.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.nombre}
+                Sem {s.id}
+                <span className="block text-[10px] font-normal opacity-80">
+                  {s.dias[0]}-{s.dias[4]}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Selector de Modo: UDS Individual vs Global */}
+        <div className="md:col-span-7 bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-2">
+          <div className="flex justify-between items-center">
+            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+              <Building className="w-4 h-4 text-emerald-600" />
+              Unidad de Servicio (UDS) / Alcance
+            </span>
+
+            {/* Toggle de Modo */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs font-bold">
+              <button
+                onClick={() => setModoVista('uds')}
+                className={`px-3 py-1 rounded-md transition-all ${
+                  modoVista === 'uds' ? 'bg-white text-emerald-800 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Por UDS Individual
+              </button>
+              <button
+                onClick={() => setModoVista('global')}
+                className={`px-3 py-1 rounded-md transition-all ${
+                  modoVista === 'global' ? 'bg-white text-emerald-800 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Consolidado Todas UDS
+              </button>
+            </div>
+          </div>
+
+          {modoVista === 'uds' ? (
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+              <select
+                value={selectedUdsId || ''}
+                onChange={(e) => {
+                  setSelectedUdsId(Number(e.target.value));
+                  setOverrideMenores3(null);
+                  setOverrideMayores3(null);
+                }}
+                className="w-full sm:w-1/2 px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500"
+              >
+                {hogares.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.nombre} ({h.madre_comunitaria})
                   </option>
                 ))}
               </select>
+
+              {/* Ajustador de Censo de Niños para la UDS */}
+              <div className="flex items-center gap-2 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 text-xs">
+                <span className="text-[11px] text-slate-500 font-semibold">Censo:</span>
+
+                {/* Menores de 3 */}
+                <div className="flex items-center gap-1 bg-sky-50 px-2 py-0.5 rounded border border-sky-200 text-sky-900">
+                  <Baby className="w-3.5 h-3.5 text-sky-700" />
+                  <span className="text-[10px] font-bold">&lt; 3a:</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="30"
+                    value={demografiaUds.menores3}
+                    onChange={(e) => setOverrideMenores3(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-8 text-center font-black bg-white border border-sky-300 rounded text-xs py-0.5"
+                  />
+                </div>
+
+                {/* Mayores de 3 */}
+                <div className="flex items-center gap-1 bg-purple-50 px-2 py-0.5 rounded border border-purple-200 text-purple-900">
+                  <Smile className="w-3.5 h-3.5 text-purple-700" />
+                  <span className="text-[10px] font-bold">&ge; 3a:</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="30"
+                    value={demografiaUds.mayores3}
+                    onChange={(e) => setOverrideMayores3(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-8 text-center font-black bg-white border border-purple-300 rounded text-xs py-0.5"
+                  />
+                </div>
+
+                <span className="font-extrabold text-slate-800 pl-1">
+                  = {demografiaUds.total} niños
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between pt-2 text-xs text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-200">
+              <span className="flex items-center gap-1.5 font-bold text-slate-800">
+                <Users className="w-4 h-4 text-emerald-600" />
+                Suma consolidada de las {hogares.length} UDS activas
+              </span>
+              <div className="flex items-center gap-3">
+                <span className="bg-sky-100 text-sky-800 font-bold px-2 py-0.5 rounded text-[11px]">
+                  &lt; 3 años: <strong>{demografiaGlobal.menores3}</strong>
+                </span>
+                <span className="bg-purple-100 text-purple-800 font-bold px-2 py-0.5 rounded text-[11px]">
+                  &ge; 3 años: <strong>{demografiaGlobal.mayores3}</strong>
+                </span>
+                <span className="bg-emerald-100 text-emerald-900 font-black px-2 py-0.5 rounded text-[11px]">
+                  Total: {demografiaGlobal.total} niños/as
+                </span>
+              </div>
             </div>
           )}
         </div>
+      </div>
 
-        {/* Botones de Selección Rápida de Semanas */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-          {SEMANAS_PRESET.map((sem) => {
-            const isSelected = semanaSeleccionadaId === sem.id;
-            return (
-              <button
-                key={sem.id}
-                onClick={() => handleSelectSemanaPreset(sem.id)}
-                className={`p-2.5 rounded-xl text-xs font-bold border transition-all text-center flex flex-col items-center justify-center gap-0.5 ${
-                  isSelected
-                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs ring-2 ring-emerald-300'
-                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
-                }`}
-              >
-                <span>{sem.label}</span>
-                <span className={`text-[10px] font-normal ${isSelected ? 'text-emerald-100' : 'text-slate-400'}`}>
-                  5 días del ciclo
-                </span>
-              </button>
-            );
-          })}
+      {/* 3. CONTROL DE DÍAS HÁBILES Y ANULACIÓN (LUNES A VIERNES) */}
+      <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-2 pb-2 border-b border-slate-100">
+          <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+            <Calendar className="w-4 h-4 text-emerald-600" />
+            Estado de Días Laborables de la Semana
+          </span>
+          <span className="text-[11px] text-slate-400">
+            Haz clic en un día para marcarlo como <strong>Festivo o No Laboral</strong> y excluirlo de las compras.
+          </span>
         </div>
 
-        {/* GRILLA DE LOS 5 DÍAS DE LA SEMANA CON SWITCH DE ANULACIÓN */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2">
-          {diasConfig.map((diaCfg, index) => {
-            const menuAsociado = menusCiclo.find((m) => m.numero_dia === diaCfg.numeroDiaCiclo);
-            const cantidadIngredientes = menuAsociado?.preparaciones?.reduce(
-              (acc: number, p: any) => acc + (p.ingredientes?.length || 0),
-              0
-            ) || 0;
-
-            return (
-              <div
-                key={diaCfg.diaSemana}
-                className={`p-3.5 rounded-xl border transition-all space-y-2.5 ${
-                  diaCfg.activo
-                    ? 'bg-emerald-50/50 border-emerald-200'
-                    : 'bg-slate-100/80 border-slate-300 opacity-80'
-                }`}
-              >
-                <div className="flex justify-between items-center">
-                  <span className="font-extrabold text-xs text-slate-800">{diaCfg.diaSemana}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleDiaActivo(index)}
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors flex items-center gap-1 ${
-                      diaCfg.activo
-                        ? 'bg-emerald-200 text-emerald-900 hover:bg-emerald-300'
-                        : 'bg-rose-200 text-rose-900 hover:bg-rose-300'
-                    }`}
-                  >
-                    {diaCfg.activo ? (
-                      <>
-                        <CheckCircle className="w-3 h-3 text-emerald-700" />
-                        Laborable
-                      </>
-                    ) : (
-                      <>
-                        <XCircle className="w-3 h-3 text-rose-700" />
-                        Anulado
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                {/* Selector de Menú del Ciclo para este día */}
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
-                    Menú del Ciclo:
-                  </label>
-                  <select
-                    disabled={!diaCfg.activo}
-                    value={diaCfg.numeroDiaCiclo}
-                    onChange={(e) => handleChangeDiaCiclo(index, Number(e.target.value))}
-                    className={`w-full px-2 py-1 border rounded-lg text-xs font-bold ${
-                      diaCfg.activo
-                        ? 'bg-white border-slate-300 text-slate-800'
-                        : 'bg-slate-200 border-slate-300 text-slate-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {Array.from({ length: 25 }, (_, i) => i + 1).map((dia) => (
-                      <option key={dia} value={dia}>
-                        Día {dia} {dia === diaCfg.numeroDiaCiclo ? `(${cantidadIngredientes} ing.)` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Motivo de anulación si está inactivo */}
-                {!diaCfg.activo ? (
-                  <div className="pt-1">
-                    <label className="block text-[10px] font-bold text-rose-700 mb-0.5">
-                      Motivo de Anulación:
-                    </label>
-                    <select
-                      value={diaCfg.motivoAnulacion}
-                      onChange={(e) => handleChangeMotivoAnulacion(index, e.target.value)}
-                      className="w-full px-2 py-1 bg-white border border-rose-300 rounded text-[11px] text-rose-800 font-medium"
-                    >
-                      <option value="Día Festivo">Día Festivo</option>
-                      <option value="Jornada Pedagógica">Jornada Pedagógica</option>
-                      <option value="Paro / Emergencia">Paro / Emergencia</option>
-                      <option value="Mantenimiento UDS">Mantenimiento UDS</option>
-                    </select>
-                  </div>
+        <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
+          {diasConfig.map((dia, idx) => (
+            <button
+              key={idx}
+              onClick={() => handleToggleDiaActivo(idx)}
+              className={`p-2.5 rounded-xl border text-left transition-all flex items-center justify-between ${
+                dia.activo
+                  ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950 hover:bg-emerald-100/70'
+                  : 'bg-rose-50/70 border-rose-300 text-rose-900 hover:bg-rose-100/70 opacity-90'
+              }`}
+            >
+              <div>
+                <span className="text-xs font-black block">{dia.diaSemana}</span>
+                <span className="text-[10px] font-mono font-semibold block text-slate-500">
+                  Menú Ciclo #{dia.numeroDiaCiclo}
+                </span>
+                <span
+                  className={`text-[9px] font-bold uppercase mt-0.5 inline-block px-1.5 py-0.2 rounded ${
+                    dia.activo ? 'bg-emerald-200/80 text-emerald-900' : 'bg-rose-200/80 text-rose-900'
+                  }`}
+                >
+                  {dia.activo ? 'Activo (Laborable)' : 'Anulado (Festivo)'}
+                </span>
+              </div>
+              <div>
+                {dia.activo ? (
+                  <CheckCircle className="w-5 h-5 text-emerald-600" />
                 ) : (
-                  <div className="text-[10px] text-emerald-800 font-medium flex items-center justify-between">
-                    <span>Preparaciones:</span>
-                    <strong className="font-bold">{menuAsociado?.preparaciones?.length || 0} registradas</strong>
-                  </div>
+                  <XCircle className="w-5 h-5 text-rose-600" />
                 )}
               </div>
-            );
-          })}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* 3. SELECTOR DE MODALIDAD: CONSOLIDADO GLOBAL vs POR UDS */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-            Modalidad de Cálculo:
+      {/* 4. BARRA DE SUB-PESTAÑAS DE NAVEGACIÓN */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 border-b border-slate-200">
+        <button
+          onClick={() => setSubTabActiva('planilla')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl text-xs font-black transition-all border-b-2 whitespace-nowrap ${
+            subTabActiva === 'planilla'
+              ? 'border-emerald-600 bg-emerald-50 text-emerald-900'
+              : 'border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-amber-500" />
+          Planilla Oficial de Entrega (Total 5 Días)
+          <span className="ml-1 text-[10px] px-1.5 py-0.2 bg-emerald-200/80 text-emerald-900 rounded-full font-bold">
+            {listaAlimentosUnicos} productos
           </span>
-          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-            <button
-              onClick={() => setModoVista('global')}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                modoVista === 'global'
-                  ? 'bg-emerald-700 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5" />
-              Consolidado Global ({hogares.length} UDS)
-            </button>
-            <button
-              onClick={() => setModoVista('uds')}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                modoVista === 'uds'
-                  ? 'bg-emerald-700 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Building className="w-3.5 h-3.5" />
-              Desglose por UDS Individual
-            </button>
+        </button>
+
+        {diasConfig.map((dia, idx) => (
+          <button
+            key={idx}
+            onClick={() => setSubTabActiva(`dia-${idx}`)}
+            className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-t-xl text-xs font-bold transition-all border-b-2 whitespace-nowrap ${
+              subTabActiva === `dia-${idx}`
+                ? 'border-emerald-600 bg-white text-emerald-900 font-black'
+                : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+            }`}
+          >
+            <Calendar className="w-3.5 h-3.5 text-slate-400" />
+            {dia.diaSemana} (M{dia.numeroDiaCiclo})
+            {!dia.activo && (
+              <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" title="Día Anulado" />
+            )}
+          </button>
+        ))}
+
+        <button
+          onClick={() => setSubTabActiva('proveedores')}
+          className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-t-xl text-xs font-bold transition-all border-b-2 whitespace-nowrap ${
+            subTabActiva === 'proveedores'
+              ? 'border-emerald-600 bg-white text-emerald-900 font-black'
+              : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <PackageCheck className="w-4 h-4 text-slate-500" />
+          Empaques Comerciales & Proveedores
+        </button>
+      </div>
+
+      {/* 5. CONTENIDO DE LA SUB-PESTAÑA SELECCIONADA */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4">
+        
+        {/* BUSCADOR DENTRO DE LA TABLA */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div className="relative w-full sm:w-80">
+            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Filtrar por nombre de alimento..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="text-xs text-slate-500 font-medium">
+            Beneficiarios activos:{' '}
+            <strong className="text-slate-800">
+              {demografiaActiva.total} niños/as ({demografiaActiva.menores3} &lt; 3a | {demografiaActiva.mayores3} &ge; 3a)
+            </strong>
           </div>
         </div>
 
-        {/* Si está en modo individual, mostrar selector de UDS */}
-        {modoVista === 'uds' && (
-          <div className="flex items-center gap-2 w-full md:w-auto">
-            <label className="text-xs font-bold text-slate-600 shrink-0">Seleccionar UDS:</label>
-            <select
-              value={selectedUdsId || ''}
-              onChange={(e) => setSelectedUdsId(Number(e.target.value))}
-              className="w-full md:w-64 px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500"
-            >
-              {hogares.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {h.nombre} (Cupo: {h.cupo_aprobado || h.numero_beneficiarios || 14})
-                </option>
-              ))}
-            </select>
+        {/* ============================================================== */}
+        {/* SUB-TAB 1: PLANILLA OFICIAL DE ENTREGA DE ALIMENTOS (5 DÍAS) */}
+        {/* ============================================================== */}
+        {subTabActiva === 'planilla' && (
+          <div className="space-y-4">
+            {/* Banner Institucional con Datos de Entrega */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2">
+              <div className="flex justify-between items-start border-b border-slate-200 pb-2">
+                <div>
+                  <h4 className="font-extrabold text-slate-900 text-sm">
+                    {metaInstitucional.eas}
+                  </h4>
+                  <p className="text-slate-600">
+                    NIT: {metaInstitucional.nit} • Contrato N°: {metaInstitucional.contrato} • Municipio: {metaInstitucional.municipio}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowEditMetaModal(true)}
+                  className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-white px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-emerald-50"
+                >
+                  <Edit3 className="w-3 h-3" /> Editar Encabezado
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-slate-700 pt-1">
+                <div>
+                  <strong>NOMBRE DEL HCB (UDS):</strong>{' '}
+                  <span className="font-bold text-emerald-800">{metadatosCompletos.nombreUds}</span>
+                </div>
+                <div>
+                  <strong>NOMBRE DE LA MADRE COMUNITARIA:</strong>{' '}
+                  <span className="font-bold text-slate-900">{metadatosCompletos.madreComunitaria}</span>
+                </div>
+              </div>
+
+              {/* Declaración Legal de Entrega */}
+              <div className="mt-2 p-3 bg-white rounded-lg border border-slate-200 text-slate-700 text-[11px] leading-relaxed">
+                El día <strong>{metaInstitucional.fechaEntrega}</strong> se hizo la entrega a la madre comunitaria los productos alimenticios establecidos en la minuta patrón y lista de compra, para la preparación de los alimentos de los niños y niñas beneficiarios de la modalidad HCB; los cuales se relacionan a continuación: <strong>menú {textoCiclo}</strong>, semana del <strong>{metaInstitucional.fechaInicio}</strong> hasta el <strong>{metaInstitucional.fechaFin}</strong>:
+              </div>
+            </div>
+
+            {/* TABLA OFICIAL DE PRODUCTOS ENTREGADOS EN LOS 5 DÍAS */}
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-900 text-white font-bold uppercase tracking-wider">
+                  <tr>
+                    <th className="p-3 text-center w-12">N°</th>
+                    <th className="p-3">PRODUCTO / ALIMENTO</th>
+                    <th className="p-3 text-right">UNIDAD DE MEDIDA ( GRAMOS- ML)</th>
+                    <th className="p-3 text-right">EQUIVALENTE EN KILOS</th>
+                    <th className="p-3 text-center">ESTADO RECEPCIÓN</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {productosFiltradosPlanilla.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-slate-400 text-xs">
+                        No hay productos registrados para esta semana.
+                      </td>
+                    </tr>
+                  ) : (
+                    productosFiltradosPlanilla.map((prod, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-3 text-center font-mono text-slate-400 font-bold">
+                          {idx + 1}
+                        </td>
+                        <td className="p-3 font-bold text-slate-900">
+                          {prod.producto}
+                        </td>
+                        <td className="p-3 text-right font-mono font-extrabold text-slate-900 bg-slate-50/50">
+                          {prod.totalGramos.toLocaleString('es-CO')}
+                        </td>
+                        <td className="p-3 text-right font-mono text-slate-600">
+                          {(prod.totalGramos / 1000).toFixed(2)} kg
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                            Conforme
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                <tfoot className="bg-slate-100 font-black text-xs text-slate-900 border-t-2 border-slate-300">
+                  <tr>
+                    <td colSpan={2} className="p-3 text-right uppercase">
+                      TOTAL CONSOLIDADO SEMANAL ({productosFiltradosPlanilla.length} PRODUCTOS):
+                    </td>
+                    <td className="p-3 text-right font-mono text-emerald-900 text-sm">
+                      {totalGramosSemana.toLocaleString('es-CO')} g
+                    </td>
+                    <td className="p-3 text-right font-mono text-slate-800 text-sm">
+                      {(totalGramosSemana / 1000).toFixed(2)} kg
+                    </td>
+                    <td className="p-3 text-center text-emerald-700">
+                      100% Entregado
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            {/* SECCIÓN DE FIRMAS OFICIALES ICBF */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-6 border-t border-slate-200">
+              <div className="p-4 border border-dashed border-slate-300 rounded-xl bg-slate-50 text-center space-y-3">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Responsable de Recepción en la UDS
+                </span>
+                <div className="pt-8 border-b border-slate-400 mx-6"></div>
+                <div>
+                  <strong className="text-xs text-slate-900 block uppercase">
+                    RECIBIO A SATISFACCION
+                  </strong>
+                  <p className="text-[11px] text-slate-600 font-medium">
+                    Madre Comunitaria: {metadatosCompletos.madreComunitaria}
+                  </p>
+                  <p className="text-[10px] text-slate-400">C.C. ____________________________</p>
+                </div>
+              </div>
+
+              <div className="p-4 border border-dashed border-slate-300 rounded-xl bg-slate-50 text-center space-y-3">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Responsable de Suministro y Despacho
+                </span>
+                <div className="pt-8 border-b border-slate-400 mx-6"></div>
+                <div>
+                  <strong className="text-xs text-slate-900 block uppercase">
+                    ENTREGO
+                  </strong>
+                  <p className="text-[11px] text-slate-600 font-medium">
+                    Nutricionista / Supervisor ICBF / EAS
+                  </p>
+                  <p className="text-[10px] text-slate-400">T.P. / C.C. ____________________________</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* SUB-TABS 2 A 6: DESGLOSE DIARIO (DÍA 1 A DÍA 5) */}
+        {/* ============================================================== */}
+        {diaSeleccionadoObj && (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-200">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-emerald-600" />
+                <h4 className="font-extrabold text-sm text-slate-900">
+                  {diaSeleccionadoObj.diaSemana} — Menú del Ciclo #{diaSeleccionadoObj.numeroDiaCiclo}
+                </h4>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    diaSeleccionadoObj.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                  }`}
+                >
+                  {diaSeleccionadoObj.activo ? 'Día Activo' : `Anulado (${diaSeleccionadoObj.motivoAnulacion})`}
+                </span>
+              </div>
+              <div className="text-xs text-slate-600 font-medium">
+                Cálculo: ({diaSeleccionadoObj.items[0]?.gMenor || 0}g × {demografiaActiva.menores3} niños) + ({diaSeleccionadoObj.items[0]?.gMayor || 0}g × {demografiaActiva.mayores3} niños)
+              </div>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-100 text-slate-700 font-bold uppercase tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="p-3">INGREDIENTE / ALIMENTO</th>
+                    <th className="p-3 text-right">GRAMAJE &lt; 3a (g)</th>
+                    <th className="p-3 text-right">GRAMAJE &ge; 3a (g)</th>
+                    <th className="p-3 text-right bg-sky-50 text-sky-900">
+                      MENOR DE 3 (g) <span className="block text-[9px] font-normal">({demografiaActiva.menores3} niños)</span>
+                    </th>
+                    <th className="p-3 text-right bg-purple-50 text-purple-900">
+                      MAYOR DE 3 (g) <span className="block text-[9px] font-normal">({demografiaActiva.mayores3} niños)</span>
+                    </th>
+                    <th className="p-3 text-right bg-emerald-50 text-emerald-950 font-black">
+                      TOTAL DÍA (g)
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {productosFiltradosDia.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-slate-400 text-xs">
+                        No hay ingredientes registrados para este día.
+                      </td>
+                    </tr>
+                  ) : (
+                    productosFiltradosDia.map((it, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-2.5 font-bold text-slate-800">{it.nombre}</td>
+                        <td className="p-2.5 text-right font-mono text-slate-600">{it.gMenor}</td>
+                        <td className="p-2.5 text-right font-mono text-slate-600">{it.gMayor}</td>
+                        <td className="p-2.5 text-right font-mono font-bold text-sky-800 bg-sky-50/40">
+                          {it.totalMenor}
+                        </td>
+                        <td className="p-2.5 text-right font-mono font-bold text-purple-800 bg-purple-50/40">
+                          {it.totalMayor}
+                        </td>
+                        <td className="p-2.5 text-right font-mono font-extrabold text-emerald-900 bg-emerald-50/40">
+                          {it.totalDia}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* SUB-TAB 7: EMPAQUES COMERCIALES Y PROVEEDORES */}
+        {/* ============================================================== */}
+        {subTabActiva === 'proveedores' && (
+          <div className="space-y-4">
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs flex items-center gap-2">
+              <Info className="w-4 h-4 text-amber-700 shrink-0" />
+              <span>
+                Los empaques comerciales se calculan con redondeo hacia arriba{' '}
+                <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[10px]">⌈Demanda Total / Presentación⌉</code>,
+                garantizando abastecimiento comercial completo a los proveedores.
+              </span>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-100 text-slate-700 font-bold uppercase tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="p-3">PRODUCTO</th>
+                    <th className="p-3 text-right">DEMANDA SEMANAL</th>
+                    <th className="p-3 text-center">PRESENTACIÓN COMERCIAL</th>
+                    <th className="p-3 text-center">EMPAQUES A COMPRAR</th>
+                    <th className="p-3 text-right">COSTO SUB-TOTAL</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {productosFiltradosPlanilla.map((p, idx) => {
+                    const pres = p.presentacionGramos || 1000;
+                    const empaques = Math.ceil(p.totalGramos / pres);
+                    const costoUnit = p.costoUnidadCompra || 0;
+                    const costoTotal = empaques * costoUnit;
+
+                    return (
+                      <tr key={idx} className="hover:bg-slate-50">
+                        <td className="p-2.5 font-bold text-slate-900">{p.producto}</td>
+                        <td className="p-2.5 text-right font-mono font-bold text-slate-800">
+                          {(p.totalGramos / 1000).toFixed(2)} kg ({p.totalGramos} g)
+                        </td>
+                        <td className="p-2.5 text-center text-slate-600 font-mono">
+                          {p.tipoEmpaque || 'Bolsa'} ({pres}g)
+                        </td>
+                        <td className="p-2.5 text-center font-extrabold text-emerald-800 font-mono">
+                          {empaques} unidades
+                        </td>
+                        <td className="p-2.5 text-right font-mono font-bold text-slate-900">
+                          ${costoTotal.toLocaleString('es-CO')}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
 
-      {/* 4. TARJETAS KPI DE RESUMEN LOGÍSTICO Y FINANCIERO */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Inversión en Víveres</p>
-            <h3 className="text-2xl font-black text-emerald-700 mt-1">
-              ${totalCostoGeneral.toLocaleString('es-CO')}
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">Presupuesto semanal total</p>
-          </div>
-          <div className="p-3 bg-emerald-100 text-emerald-800 rounded-2xl">
-            <DollarSign className="w-6 h-6" />
+      {/* MODAL PARA EDITAR METADATOS INSTITUCIONALES ICBF */}
+      {showEditMetaModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full p-6 space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-emerald-600" />
+                Editar Encabezado Oficial ICBF de la Planilla
+              </h3>
+              <button
+                onClick={() => setShowEditMetaModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Entidad Administradora del Servicio (EAS):
+                </label>
+                <input
+                  type="text"
+                  value={metaInstitucional.eas}
+                  onChange={(e) => setMetaInstitucional({ ...metaInstitucional, eas: e.target.value })}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">NIT:</label>
+                  <input
+                    type="text"
+                    value={metaInstitucional.nit}
+                    onChange={(e) => setMetaInstitucional({ ...metaInstitucional, nit: e.target.value })}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Contrato N°:</label>
+                  <input
+                    type="text"
+                    value={metaInstitucional.contrato}
+                    onChange={(e) => setMetaInstitucional({ ...metaInstitucional, contrato: e.target.value })}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Municipio:</label>
+                <input
+                  type="text"
+                  value={metaInstitucional.municipio}
+                  onChange={(e) => setMetaInstitucional({ ...metaInstitucional, municipio: e.target.value })}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Fecha Entrega:</label>
+                  <input
+                    type="text"
+                    value={metaInstitucional.fechaEntrega}
+                    onChange={(e) => setMetaInstitucional({ ...metaInstitucional, fechaEntrega: e.target.value })}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-[11px]"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Inicio Semana:</label>
+                  <input
+                    type="text"
+                    value={metaInstitucional.fechaInicio}
+                    onChange={(e) => setMetaInstitucional({ ...metaInstitucional, fechaInicio: e.target.value })}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-[11px]"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Fin Semana:</label>
+                  <input
+                    type="text"
+                    value={metaInstitucional.fechaFin}
+                    onChange={(e) => setMetaInstitucional({ ...metaInstitucional, fechaFin: e.target.value })}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-[11px]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setShowEditMetaModal(false)}
+                className="px-4 py-2 bg-emerald-700 text-white rounded-lg text-xs font-bold hover:bg-emerald-800"
+              >
+                Guardar y Aplicar
+              </button>
+            </div>
           </div>
         </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Demanda Bruta Total</p>
-            <h3 className="text-2xl font-black text-slate-900 mt-1">
-              {totalKilosGeneral.toFixed(1)} <span className="text-sm font-semibold text-slate-500">kg</span>
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">Peso bruto total a adquirir</p>
-          </div>
-          <div className="p-3 bg-blue-100 text-blue-800 rounded-2xl">
-            <ShoppingBag className="w-6 h-6" />
-          </div>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Beneficiarios Atendidos</p>
-            <h3 className="text-2xl font-black text-slate-900 mt-1">
-              {totalBeneficiariosActivos} <span className="text-sm font-semibold text-slate-500">niños/as</span>
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              {modoVista === 'global' ? `Suma de ${hogares.length} UDS` : udsSeleccionada?.madre_comunitaria}
-            </p>
-          </div>
-          <div className="p-3 bg-amber-100 text-amber-800 rounded-2xl">
-            <Users className="w-6 h-6" />
-          </div>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Días y Raciones</p>
-            <h3 className="text-2xl font-black text-slate-900 mt-1">
-              {diasHabilesActivosCount} <span className="text-sm font-semibold text-slate-500">días activos</span>
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              {totalBeneficiariosActivos * diasHabilesActivosCount} raciones semanales
-            </p>
-          </div>
-          <div className="p-3 bg-purple-100 text-purple-800 rounded-2xl">
-            <Calendar className="w-6 h-6" />
-          </div>
-        </div>
-      </div>
-
-      {/* 5. TABLA DETALLADA DE VÍVERES Y EMPAQUES A ADQUIRIR */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        {/* Barra de Búsqueda y Filtro por Grupo */}
-        <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-          <div className="relative w-full md:w-80">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Buscar por alimento o código TCAC..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 w-full md:w-auto">
-            <Filter className="w-4 h-4 text-slate-400 shrink-0" />
-            <select
-              value={selectedGrupoFiltro}
-              onChange={(e) => setSelectedGrupoFiltro(e.target.value)}
-              className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-emerald-500"
-            >
-              <option value="TODOS">Todos los Grupos de Alimentos ({listaGruposAlimentos.length})</option>
-              {listaGruposAlimentos.map((grupo) => (
-                <option key={grupo} value={grupo}>
-                  {grupo}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Tabla */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-100/70 text-slate-600 font-bold uppercase tracking-wider border-b border-slate-200">
-              <tr>
-                <th className="p-3 text-center">Cód. TCAC</th>
-                <th className="p-3">Alimento / Insumo</th>
-                <th className="p-3">Grupo de Alimento</th>
-                <th className="p-3 text-right">Bruto/Niño (g)</th>
-                <th className="p-3 text-right font-black text-slate-900">Demanda Total (kg)</th>
-                <th className="p-3 text-center">Presentación Comercial</th>
-                <th className="p-3 text-center bg-emerald-100/70 text-emerald-950 font-black">
-                  Empaques a Adquirir ⌈...⌉
-                </th>
-                <th className="p-3 text-right">Costo Unit.</th>
-                <th className="p-3 text-right font-black text-emerald-900">Subtotal ($)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {itemsFiltrados.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="text-center py-10 text-slate-400">
-                    <p className="font-semibold">No hay insumos registrados para los días activos seleccionados.</p>
-                    <p className="text-[11px] mt-1">Verifica que los menús tengan ingredientes cargados en la pestaña "Gestión de Minutas".</p>
-                  </td>
-                </tr>
-              ) : (
-                itemsFiltrados.map((item) => (
-                  <tr key={item.alimentoId} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="p-3 text-center">
-                      <span className="font-mono text-[11px] font-bold bg-slate-100 px-2 py-0.5 rounded text-slate-700">
-                        {item.codigo_icbf}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <span className="font-bold text-slate-900 block">{item.nombre}</span>
-                      <span className="text-[10px] text-slate-400 line-clamp-1 truncate max-w-xs block" title={item.preparacionesUsadas.join(', ')}>
-                        {item.preparacionesUsadas.join(', ')}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        {item.grupo_alimento}
-                      </span>
-                    </td>
-                    <td className="p-3 text-right font-medium text-slate-600">
-                      {item.pesoBrutoPorNinoSemana.toFixed(1)}g
-                    </td>
-                    <td className="p-3 text-right font-bold text-slate-900">
-                      {item.totalBrutoKilos.toFixed(2)} kg
-                    </td>
-                    <td className="p-3 text-center text-slate-600">
-                      {item.presentacion_comercial_gramos}g ({item.tipo_empaque})
-                    </td>
-                    <td className="p-3 text-center bg-emerald-50/60 font-black text-sm text-emerald-900">
-                      {item.unidadesComerciales}{' '}
-                      <span className="text-[10px] font-normal text-emerald-700">{item.tipo_empaque}</span>
-                    </td>
-                    <td className="p-3 text-right font-mono text-slate-600">
-                      ${item.costo_unidad_compra.toLocaleString('es-CO')}
-                    </td>
-                    <td className="p-3 text-right font-bold font-mono text-emerald-800">
-                      ${item.costoSubtotal.toLocaleString('es-CO')}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-            {itemsFiltrados.length > 0 && (
-              <tfoot className="bg-slate-100 font-extrabold text-xs text-slate-900 border-t-2 border-slate-300">
-                <tr>
-                  <td colSpan={4} className="p-3 text-right uppercase">
-                    TOTALES CONSOLIDADOS:
-                  </td>
-                  <td className="p-3 text-right text-slate-900">
-                    {totalKilosGeneral.toFixed(2)} kg
-                  </td>
-                  <td colSpan={3} className="p-3 text-center text-slate-500">
-                    {proyeccionCompras.length} alimentos calculados
-                  </td>
-                  <td className="p-3 text-right font-mono text-emerald-900 text-sm">
-                    ${totalCostoGeneral.toLocaleString('es-CO')}
-                  </td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
-
-        {/* Nota Normativa ICBF */}
-        <div className="p-4 bg-slate-50 border-t border-slate-200 text-xs text-slate-600 flex items-start gap-2.5">
-          <Info className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-          <p>
-            <strong>Criterio Técnico ICBF:</strong> Los empaques a adquirir se calculan aplicando la función techo matemática{' '}
-            <code className="bg-slate-200 px-1 py-0.5 rounded font-mono text-[11px]">⌈Demanda Total / Presentación Comercial⌉</code>,
-            garantizando que ninguna Unidad de Servicio quede desabastecida por fracciones no comerciales de producto. Los días marcados como{' '}
-            <span className="font-semibold text-rose-700">Anulado (Festivos)</span> quedan completamente excluidos de la orden de compra semanal.
-          </p>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

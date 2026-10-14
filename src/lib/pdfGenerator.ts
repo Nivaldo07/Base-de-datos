@@ -308,3 +308,149 @@ export function generarPDFPlanillaEntrega(
 
   doc.save(`Planilla_Entrega_Raciones_${modalidad}.pdf`);
 }
+
+/**
+ * GENERADOR 4: Planilla Oficial de Entrega de Alimentos a la Madre Comunitaria (ICBF)
+ * Formato oficial con datos de EAS, NIT, Contrato, Municipio, HCB, rango de menú semanal y tabla de productos con firmas.
+ */
+export function generarPDFPlanillaEntregaOficialUDS(
+  meta: {
+    eas: string;
+    nit: string;
+    contrato: string;
+    municipio: string;
+    nombreUds: string;
+    madreComunitaria: string;
+    fechaEntrega: string;
+    diasCicloTexto: string;
+    fechaInicio: string;
+    fechaFin: string;
+  },
+  items: Array<{
+    producto: string;
+    totalGramos: number;
+    unidad?: string;
+  }>
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+
+  // Encabezado
+  doc.setFillColor(16, 185, 129); // Emerald ICBF
+  doc.rect(0, 0, 215.9, 18, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text('INSTITUTO COLOMBIANO DE BIENESTAR FAMILIAR - ICBF', 107.9, 7.5, { align: 'center' });
+  doc.setFontSize(9);
+  doc.text('PLANILLA OFICIAL DE ENTREGA DE ALIMENTOS - MODALIDAD HCB', 107.9, 13.5, { align: 'center' });
+
+  // Bloque institucional
+  doc.setTextColor(30, 41, 59);
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+
+  let y = 25;
+  const lineSpacing = 4.5;
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('ENTIDAD ADMINISTRADORA DEL SERVICIO:', 14, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(meta.eas || 'ASOCIACION DE FAMILIA DE HCB DE CAIMITO-SUCRE', 80, y);
+  y += lineSpacing;
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('NIT:', 14, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(meta.nit || '8230002828 - 6', 80, y);
+  doc.setFont('helvetica', 'bold');
+  doc.text('CONTRATO N°:', 125, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(meta.contrato || '70005732024', 155, y);
+  y += lineSpacing;
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('MUNICIPIO:', 14, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(meta.municipio || 'CAIMITO-SUCRE', 80, y);
+  y += lineSpacing;
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('NOMBRE DEL HCB (UDS):', 14, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(meta.nombreUds || 'Travesuras Infantiles', 80, y);
+  y += lineSpacing;
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('NOMBRE DE LA MADRE COMUNITARIA:', 14, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(meta.madreComunitaria || 'Ana Acevedo', 80, y);
+  y += lineSpacing + 2;
+
+  // Texto legal
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(14, y, 187.9, 14, 2, 2, 'F');
+  doc.setFontSize(7.5);
+  doc.setTextColor(51, 65, 85);
+
+  const textoLegal = `El día ${meta.fechaEntrega || '26 del mes 09 del año 2026'} se hizo la entrega a la madre comunitaria los productos alimenticios establecidos en la minuta patrón y lista de compra, para la preparación de los alimentos de los niños y niñas beneficiarios de la modalidad HCB; los cuales se relacionan a continuación: menú ${meta.diasCicloTexto || '21 - 25'}, semana del ${meta.fechaInicio || '28 de septiembre'} hasta el ${meta.fechaFin || '2 de octubre de 2026'}.`;
+  doc.text(textoLegal, 17, y + 5, { maxWidth: 182 });
+  y += 18;
+
+  // Tabla de Productos
+  const bodyRows = items.map((it, idx) => [
+    `${idx + 1}`,
+    it.producto,
+    `${it.totalGramos.toLocaleString('es-CO')} g / ml`,
+    it.totalGramos >= 1000 ? `${(it.totalGramos / 1000).toFixed(2)} kg` : `${it.totalGramos} g`,
+    'Conforme'
+  ]);
+
+  autoTable(doc, {
+    startY: y,
+    head: [['N°', 'PRODUCTO / ALIMENTO', 'CANTIDAD TOTAL (5 DÍAS)', 'EQUIVALENTE', 'ESTADO']],
+    body: bodyRows,
+    theme: 'grid',
+    headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5 },
+    styles: { fontSize: 7, cellPadding: 2, minCellHeight: 5.5 },
+    columnStyles: {
+      0: { cellWidth: 10, halign: 'center' },
+      1: { cellWidth: 95 },
+      2: { cellWidth: 35, halign: 'right' },
+      3: { cellWidth: 25, halign: 'right' },
+      4: { cellWidth: 22, halign: 'center' },
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  const finalY = (doc as any).lastAutoTable.finalY || 230;
+  let signatureY = finalY + 18;
+
+  // Si no cabe en la misma página, añadir nueva página
+  if (signatureY > 250) {
+    doc.addPage();
+    signatureY = 35;
+  }
+
+  // Firmas oficiales
+  doc.setLineWidth(0.4);
+  doc.setDrawColor(100, 116, 139);
+
+  doc.line(25, signatureY, 95, signatureY);
+  doc.setFontSize(8);
+  doc.setTextColor(30, 41, 59);
+  doc.setFont('helvetica', 'bold');
+  doc.text('RECIBIO A SATISFACCION', 60, signatureY + 4, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Madre Comunitaria: ${meta.madreComunitaria || 'Ana Acevedo'}`, 60, signatureY + 8, { align: 'center' });
+
+  doc.line(120, signatureY, 190, signatureY);
+  doc.setFont('helvetica', 'bold');
+  doc.text('ENTREGO', 155, signatureY + 4, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.text('Nutricionista / Supervisor ICBF / EAS', 155, signatureY + 8, { align: 'center' });
+
+  const safeName = (meta.nombreUds || 'UDS').replace(/[^a-zA-Z0-9_-]/g, '_');
+  doc.save(`Planilla_Entrega_${safeName}_Menus_${meta.diasCicloTexto}.pdf`);
+}
+
