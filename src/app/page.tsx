@@ -31,6 +31,7 @@ import {
 } from '@/lib/pdfGenerator';
 import MinutasTab from '@/components/MinutasTab';
 import HogaresTab from '@/components/HogaresTab';
+import ComprasTab from '@/components/ComprasTab';
 import type { AlimentoTCAC, MetaRIEN } from '@prisma/client';
 
 interface MinutaItem {
@@ -919,135 +920,7 @@ export default function Home() {
             )}
 
             {/* TAB 3: PROYECCIÓN LOGÍSTICA DE COMPRAS */}
-            {activeTab === 'compras' && (
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-4">
-                  <div>
-                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                      <ShoppingBag className="w-6 h-6 text-emerald-600" />
-                      Proyección Rápida de Compras y Empaques Comerciales
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Transformación de requerimientos netos consumidos por niño a compras brutas y unidades comerciales redondeadas hacia arriba (función techo ⌈Bruto / Empaque⌉).
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleExportPDFCompras}
-                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow"
-                  >
-                    <Download className="w-4 h-4" />
-                    Descargar Orden de Compra PDF
-                  </button>
-                </div>
-
-                {/* Parameters Form */}
-                <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-wrap gap-6 items-center">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                      Censo de Beneficiarios (Niños/as)
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        value={numNinos}
-                        onChange={(e) => setNumNinos(Math.max(1, parseInt(e.target.value) || 1))}
-                        className="w-28 bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500"
-                      />
-                      <span className="text-xs text-slate-500">beneficiarios</span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                      Días de Atención al Mes
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        max="31"
-                        value={numDias}
-                        onChange={(e) => setNumDias(Math.max(1, parseInt(e.target.value) || 1))}
-                        className="w-24 bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500"
-                      />
-                      <span className="text-xs text-slate-500">días hábiles</span>
-                    </div>
-                  </div>
-
-                  <div className="text-xs text-slate-500 border-l border-slate-300 pl-4 py-1">
-                    <div>Total Raciones Mes: <strong>{numNinos * numDias}</strong> raciones</div>
-                    <div>Minuta Referencia: <strong>{minutaNombre}</strong></div>
-                  </div>
-                </div>
-
-                {/* Purchases Table */}
-                <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-slate-600 text-xs font-semibold uppercase tracking-wider border-b border-slate-200">
-                      <tr>
-                        <th className="p-3 text-center">Código</th>
-                        <th className="p-3">Alimento</th>
-                        <th className="p-3 text-center">% Comestible</th>
-                        <th className="p-3 text-right">Neto Total Mes (kg)</th>
-                        <th className="p-3 text-right">Bruto a Comprar (kg)</th>
-                        <th className="p-3 text-center">Presentación Comercial</th>
-                        <th className="p-3 text-center bg-emerald-50 text-emerald-800">
-                          Empaques a Adquirir (⌈...⌉)
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {calculatedItems.map((item, index) => {
-                        if (!item) return null;
-
-                        const totalNetoGramos = item.gramosNetos * numNinos * numDias;
-                        const totalBrutoGramos = Math.round((totalNetoGramos / item.alim.porcentaje_comestible) * 100);
-                        const unidadesComerciales = Math.ceil(totalBrutoGramos / item.alim.presentacion_comercial_gramos);
-
-                        return (
-                          <tr key={index} className="hover:bg-slate-50 transition-colors">
-                            <td className="p-3 text-center">
-                              <span className="inline-block px-2 py-0.5 font-mono text-xs font-bold text-emerald-800 bg-emerald-100/80 rounded border border-emerald-200">
-                                {item.alim.codigo_icbf || `#${item.alim.id}`}
-                              </span>
-                            </td>
-                            <td className="p-3 font-semibold text-slate-800">
-                              {item.alim.nombre}
-                              <span className="block text-[11px] font-normal text-slate-400">
-                                Gramaje Neto por niño: {item.gramosNetos}g
-                              </span>
-                            </td>
-                            <td className="p-3 text-center font-medium text-slate-600">
-                              {item.alim.porcentaje_comestible}%
-                            </td>
-                            <td className="p-3 text-right font-medium text-slate-700">
-                              {(totalNetoGramos / 1000).toFixed(2)} kg
-                            </td>
-                            <td className="p-3 text-right font-bold text-amber-800 bg-amber-50/40">
-                              {(totalBrutoGramos / 1000).toFixed(2)} kg
-                            </td>
-                            <td className="p-3 text-center text-xs text-slate-600">
-                              {item.alim.presentacion_comercial_gramos}g ({item.alim.tipo_empaque})
-                            </td>
-                            <td className="p-3 text-center font-extrabold text-emerald-800 bg-emerald-50 text-base">
-                              {unidadesComerciales} <span className="text-xs font-normal text-emerald-700">{item.alim.tipo_empaque}</span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="p-4 bg-slate-100 rounded-lg text-xs text-slate-600 flex items-start gap-2">
-                  <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-                  <span>
-                    <strong>Nota de Interventoría:</strong> Los cálculos aplican la regla obligatoria del ICBF de redondeo normativo superior (función techo ⌈...⌉) sobre la presentación comercial registrada en el catálogo bromatológico para prevenir desabastecimiento en la entrega física.
-                  </span>
-                </div>
-              </div>
-            )}
+            {activeTab === 'compras' && <ComprasTab />}
 
             {/* TAB 4: REPORTES PDF & AUDITORÍA */}
             {activeTab === 'reportes' && (
