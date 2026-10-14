@@ -39,6 +39,7 @@ export interface MetadatosPlanillaExcel {
   menores3: number;
   mayores3: number;
   totalNinos: number;
+  logoBase64?: string;
 }
 
 /**

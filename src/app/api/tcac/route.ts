@@ -10,7 +10,14 @@ export async function GET(request: Request) {
     const foods = await prisma.alimentoTCAC.findMany({
       where: {
         AND: [
-          query ? { nombre: { contains: query } } : {},
+          query
+            ? {
+                OR: [
+                  { nombre: { contains: query, mode: 'insensitive' } },
+                  { codigo_icbf: { contains: query, mode: 'insensitive' } },
+                ],
+              }
+            : {},
           grupo ? { grupo_alimento: grupo } : {},
         ],
       },
