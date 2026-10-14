@@ -79,9 +79,18 @@ export async function POST(request: Request) {
             tiempo_comida: prep.tiempo_comida,
             ingredientes: {
               create: prep.ingredientes.map((ing: any) => ({
-                alimento_id: ing.alimento_id,
-                peso_bruto: ing.peso_bruto,
-                peso_neto: ing.peso_neto
+                alimento_id: Number(ing.alimento_id),
+                peso_bruto: Number(ing.peso_bruto) || 0,
+                peso_neto: Number(ing.peso_neto) || 0,
+                costo_unidad_compra: ing.costo_unidad_compra != null && !isNaN(Number(ing.costo_unidad_compra))
+                  ? Number(ing.costo_unidad_compra)
+                  : null,
+                sodio_mg_excel: ing.sodio_mg_excel != null && !isNaN(Number(ing.sodio_mg_excel))
+                  ? Number(ing.sodio_mg_excel)
+                  : null,
+                costo_unitario_excel: ing.costo_unitario_excel != null && !isNaN(Number(ing.costo_unitario_excel))
+                  ? Number(ing.costo_unitario_excel)
+                  : null,
               }))
             }
           }))
@@ -90,7 +99,11 @@ export async function POST(request: Request) {
       include: {
         preparaciones: {
           include: {
-            ingredientes: true
+            ingredientes: {
+              include: {
+                alimento: true
+              }
+            }
           }
         }
       }
@@ -102,3 +115,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Error creating menu' }, { status: 500 });
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const grupoId = searchParams.get('grupo_etario_id');
+    const dia = searchParams.get('numero_dia');
+    const menuId = searchParams.get('id');
+
+    if (menuId) {
+      await prisma.menu.delete({ where: { id: Number(menuId) } });
+      return NextResponse.json({ success: true, message: 'Menú eliminado correctamente' });
+    }
+
+    if (grupoId && dia) {
+      const existingMenu = await prisma.menu.findFirst({
+        where: { numero_dia: Number(dia), grupo_etario_id: Number(grupoId) }
+      });
+      if (existingMenu) {
+        await prisma.menu.delete({ where: { id: existingMenu.id } });
+      }
+      return NextResponse.json({ success: true, message: 'Menú eliminado correctamente' });
+    }
+
+    return NextResponse.json({ error: 'Faltan parámetros para eliminar el menú' }, { status: 400 });
+  } catch (error) {
+    console.error("Error deleting menu:", error);
+    return NextResponse.json({ error: 'Error al eliminar menú' }, { status: 500 });
+  }
+}
+

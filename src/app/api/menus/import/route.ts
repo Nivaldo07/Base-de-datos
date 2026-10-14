@@ -30,68 +30,115 @@ export async function POST(request: Request) {
     let colIdx = { tiempo: -1, prep: -1, tcac: -1, bruto: -1, neto: -1, costo: -1, sodio: -1, costo_unitario: -1 };
     let headerFound = false;
 
-    // Helper to normalize strings (remove accents, uppercase, trim)
-    const normalize = (str: any) => {
-      if (typeof str !== 'string') return '';
-      return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
+    // Helper de normalización profunda de encabezados
+    const cleanText = (str: any): string => {
+      if (str == null) return '';
+      return String(str)
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "") // remueve acentos
+        .replace(/[\r\n\t]+/g, ' ')      // convierte saltos de línea en espacios
+        .replace(/\s+/g, ' ')            // colapsa espacios múltiples
+        .toUpperCase()
+        .trim();
     };
 
-    for (const row of csvData) {
+    // Helper de parsing numérico tolerante a monedas y formatos latinos
+    const parseNumeric = (val: any): number => {
+      if (val == null) return NaN;
+      if (typeof val === 'number') return val;
+      const cleaned = String(val)
+        .replace(/[$]/g, '')
+        .replace(/\s+/g, '')
+        .replace(',', '.');
+      return parseFloat(cleaned);
+    };
+
+    // Predicados de detección
+    const isTiempo = (s: string) => s.includes('TIEMPO DE COMIDA') || s.includes('TIEMPO COMIDA') || s === 'TIEMPO';
+    const isPrep = (s: string) => s.includes('NOMBRE DE LA PREPARACION') || s.includes('PREPARACION') || s.includes('NOMBRE DE LA PREP');
+    const isTcac = (s: string) => s.includes('CODIGO ICBF') || s.includes('CODIGO TCAC') || s.includes('TCAC') || s === 'CODIGO';
+    const isBruto = (s: string) => s.includes('PESO BRUTO') || (s.includes('BRUTO') && !s.includes('NETO'));
+    const isNeto = (s: string) => s.includes('PESO NETO') || (s.includes('NETO') && !s.includes('BRUTO'));
+    const isSodio = (s: string) => s.includes('SODIO');
+    const isCostoUnitario = (s: string) => s.includes('COSTO UNITARIO') || s.includes('VALOR UNITARIO') || s.includes('COSTO UNIT');
+    const isCostoUnidadCompra = (s: string) => 
+      !isCostoUnitario(s) && (
+        s.includes('COSTO UNIDAD DE COMPRA') ||
+        s.includes('COSTO UNIDAD') ||
+        (s.includes('COSTO') && s.includes('COMPRA')) ||
+        s.includes('PRECIO UNIDAD') ||
+        s.includes('VALOR COMPRA')
+      );
+
+    for (let r = 0; r < csvData.length; r++) {
+      const row = csvData[r];
       if (!Array.isArray(row)) continue;
 
       if (!headerFound) {
-        // Attempt to find header columns using normalized text
-        const tIdx = row.findIndex(c => normalize(c).includes('TIEMPO DE COMIDA'));
-        const pIdx = row.findIndex(c => normalize(c).includes('PREPARACION') || normalize(c).includes('NOMBRE DE LA PREP'));
-        const tcacIdx = row.findIndex(c => normalize(c).includes('TCAC'));
-        const bIdx = row.findIndex(c => normalize(c).includes('PESO BRUTO'));
-        const nIdx = row.findIndex(c => normalize(c).includes('PESO NETO'));
-        const cIdx = row.findIndex(c => normalize(c).includes('COSTO UNIDAD DE COMPRA'));
-        const sodIdx = row.findIndex(c => normalize(c) === 'SODIO (MG)' || normalize(c) === 'SODIO(MG)');
-        const cuIdx = row.findIndex(c => normalize(c).includes('COSTO UNITARIO'));
+        const nextRow = (r + 1 < csvData.length && Array.isArray(csvData[r + 1])) ? csvData[r + 1] : [];
+        const maxCols = Math.max(row.length, nextRow.length);
+
+        let tIdx = -1, pIdx = -1, tcacIdx = -1, bIdx = -1, nIdx = -1, cIdx = -1, sodIdx = -1, cuIdx = -1;
+
+        for (let c = 0; c < maxCols; c++) {
+          const cell1 = cleanText(row[c]);
+          const cell2 = cleanText(nextRow[c]);
+          const combined = cleanText(cell1 + ' ' + cell2);
+
+          const match = (predicate: (s: string) => boolean) => predicate(cell1) || predicate(combined);
+
+          if (tIdx === -1 && match(isTiempo)) tIdx = c;
+          if (pIdx === -1 && match(isPrep)) pIdx = c;
+          if (tcacIdx === -1 && match(isTcac)) tcacIdx = c;
+          if (bIdx === -1 && match(isBruto)) bIdx = c;
+          if (nIdx === -1 && match(isNeto)) nIdx = c;
+          if (sodIdx === -1 && match(isSodio)) sodIdx = c;
+          if (cuIdx === -1 && match(isCostoUnitario)) cuIdx = c;
+          if (cIdx === -1 && match(isCostoUnidadCompra)) cIdx = c;
+        }
 
         if (tIdx !== -1 || pIdx !== -1 || tcacIdx !== -1) {
-          // Found headers!
           const base = tIdx !== -1 ? tIdx : (pIdx !== -1 ? pIdx - 1 : 0);
           colIdx.tiempo = tIdx !== -1 ? tIdx : base;
           colIdx.prep = pIdx !== -1 ? pIdx : base + 1;
           colIdx.tcac = tcacIdx !== -1 ? tcacIdx : base + 2;
           colIdx.bruto = bIdx !== -1 ? bIdx : base + 4;
           colIdx.neto = nIdx !== -1 ? nIdx : base + 5;
-          colIdx.costo = cIdx !== -1 ? cIdx : base + 16;
           colIdx.sodio = sodIdx !== -1 ? sodIdx : base + 14;
+          colIdx.costo = cIdx !== -1 ? cIdx : base + 16;
           colIdx.costo_unitario = cuIdx !== -1 ? cuIdx : base + 17;
           headerFound = true;
-          continue; // skip the header row
+
+          // Si nextRow fue una fila de sub-encabezados (unidades sin código TCAC), saltarla:
+          const hasFoodCodeInNextRow = nextRow.some((cell: any) => {
+            const val = cleanText(cell);
+            return /^[A-Z][0-9]{3}$/.test(val) || /^[A-Z0-9]{4}$/.test(val);
+          });
+          if (!hasFoodCodeInNextRow && nextRow.length > 0) {
+            r++;
+          }
+          continue;
+        }
+
+        // Try checking if it's a legacy row format by detecting a TCAC code anyway
+        const possibleTcac = row.findIndex(c => typeof c === 'string' && c.match(/^[A-Z0-9]{4}$/));
+        if (possibleTcac !== -1 && possibleTcac >= 2) {
+          const base = possibleTcac - 2;
+          colIdx = { tiempo: base, prep: base + 1, tcac: possibleTcac, bruto: base + 4, neto: base + 5, costo: base + 16, sodio: base + 14, costo_unitario: base + 17 };
+          headerFound = true;
+        } else {
+          continue;
         }
       }
 
-      if (!headerFound) {
-         // Try checking if it's a legacy row format by detecting a TCAC code anyway
-         const possibleTcac = row.findIndex(c => typeof c === 'string' && c.match(/^[A-Z0-9]{4}$/));
-         if (possibleTcac !== -1 && possibleTcac >= 2) {
-             const base = possibleTcac - 2;
-             colIdx = { tiempo: base, prep: base + 1, tcac: possibleTcac, bruto: base + 4, neto: base + 5, costo: base + 16, sodio: base + 14, costo_unitario: base + 17 };
-             headerFound = true;
-         } else {
-             continue; // No headers yet and not a clear data row
-         }
-      }
-
-      const colTiempo = normalize(row[colIdx.tiempo]); 
-      const colPrep = normalize(row[colIdx.prep]); 
-      let colTCAC = normalize(row[colIdx.tcac]); 
-      const pesoBrutoStr = row[colIdx.bruto]?.toString().replace(',', '.');
-      const pesoNetoStr = row[colIdx.neto]?.toString().replace(',', '.');
-      const costoUnidadCompraStr = row[colIdx.costo]?.toString().replace(',', '.');
-      const sodioStr = row[colIdx.sodio]?.toString().replace(',', '.');
-      const costoUnitarioStr = row[colIdx.costo_unitario]?.toString().replace(',', '.');
-
-      const pesoBruto = parseFloat(pesoBrutoStr || '');
-      const pesoNeto = parseFloat(pesoNetoStr || '');
-      const costoUnidadCompra = parseFloat(costoUnidadCompraStr || '');
-      const sodioExcel = parseFloat(sodioStr || '');
-      const costoUnitarioExcel = parseFloat(costoUnitarioStr || '');
+      const colTiempo = cleanText(row[colIdx.tiempo]); 
+      const colPrep = cleanText(row[colIdx.prep]); 
+      let colTCAC = cleanText(row[colIdx.tcac]); 
+      const pesoBruto = parseNumeric(row[colIdx.bruto]);
+      const pesoNeto = parseNumeric(row[colIdx.neto]);
+      const costoUnidadCompra = parseNumeric(row[colIdx.costo]);
+      const sodioExcel = parseNumeric(row[colIdx.sodio]);
+      const costoUnitarioExcel = parseNumeric(row[colIdx.costo_unitario]);
 
       // Detect Time
       if (colTiempo && !colTiempo.includes('TIEMPO DE COMIDA') && !colTiempo.includes('APORTE TOTAL') && !colTiempo.includes('ANALISIS') && !colTiempo.includes('MENU')) {
@@ -171,7 +218,11 @@ export async function POST(request: Request) {
       include: {
         preparaciones: {
           include: {
-            ingredientes: true
+            ingredientes: {
+              include: {
+                alimento: true
+              }
+            }
           }
         }
       }

@@ -1,6 +1,7 @@
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 generator client {
@@ -72,16 +73,53 @@ model MinutaDetalle {
   @@map("minuta_detalles")
 }
 
-// 5. Contratos y Unidades de Atención (Para Compras)
+// 5. Contratos y Unidades de Atención / Hogares Comunitarios (UDS)
 model UnidadAtencion {
-  id                   Int    @id @default(autoincrement())
+  id                   Int                @id @default(autoincrement())
+  codigo_uds           String?            @unique
   nombre               String
-  regional             String
-  centro_zonal         String
-  numero_beneficiarios Int
-  dias_atencion_mes    Int    @default(20)
+  madre_comunitaria    String             @default("Madre Comunitaria")
+  telefono             String?
+  direccion            String?
+  barrio               String?
+  regional             String             @default("Antioquia")
+  centro_zonal         String             @default("Centro Zonal 1")
+  cupo_aprobado        Int                @default(14)
+  numero_beneficiarios Int                @default(14)
+  dias_atencion_mes    Int                @default(20)
+  creado_en            DateTime           @default(now())
+  actualizado_en       DateTime           @default(now()) @updatedAt
+  beneficiarios        BeneficiarioNino[]
+  usuarios             Usuario[]
 
   @@map("unidades_atencion")
+}
+
+// 5.1 Beneficiarios Niños y Niñas Vinculados
+model BeneficiarioNino {
+  id                 Int            @id @default(autoincrement())
+  nombre_completo    String
+  tipo_documento     String         @default("RC")
+  numero_documento   String
+  fecha_nacimiento   DateTime
+  genero             String         // "M" | "F"
+  acudiente          String
+  contacto_acudiente String
+  parentesco         String?        @default("Madre")
+  eps                String?
+  rh                 String?
+  alergias           String?
+  peso_actual_kg     Float?
+  talla_actual_cm    Float?
+  estado             String         @default("ACTIVO")
+  unidad_id          Int
+  unidad             UnidadAtencion @relation(fields: [unidad_id], references: [id], onDelete: Cascade)
+  creado_en          DateTime       @default(now())
+  actualizado_en     DateTime       @default(now()) @updatedAt
+
+  @@index([unidad_id])
+  @@index([numero_documento])
+  @@map("beneficiarios_ninos")
 }
 
 // 6. Ciclo de Men�s
@@ -119,4 +157,20 @@ model IngredientePreparacion {
   costo_unidad_compra Float?
   sodio_mg_excel      Float?
   costo_unitario_excel Float?
+}
+
+// 7. Usuarios del Sistema y Autenticación
+model Usuario {
+  id             Int             @id @default(autoincrement())
+  email          String          @unique
+  password       String
+  nombre         String
+  rol            String          @default("NUTRICIONISTA") // "ADMIN", "NUTRICIONISTA", "COORDINADOR", "MADRE_COMUNITARIA"
+  activo         Boolean         @default(true)
+  unidad_id      Int?
+  unidad         UnidadAtencion? @relation(fields: [unidad_id], references: [id])
+  creado_en      DateTime        @default(now())
+  actualizado_en DateTime        @updatedAt
+
+  @@map("usuarios")
 }

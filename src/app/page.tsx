@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Utensils,
   BookOpen,
@@ -19,6 +20,9 @@ import {
   FileText,
   Printer,
   Download,
+  ChevronLeft,
+  ChevronRight,
+  LogOut,
 } from 'lucide-react';
 import {
   generarPDFMinutaPatron,
@@ -26,42 +30,32 @@ import {
   generarPDFPlanillaEntrega,
 } from '@/lib/pdfGenerator';
 import MinutasTab from '@/components/MinutasTab';
-
-interface AlimentoTCAC {
-  id: number;
-  codigo_icbf: string | null;
-  nombre: string;
-  grupo_alimento: string;
-  porcentaje_comestible: number;
-  energia_kcal: number;
-  proteina_g: number;
-  grasa_g: number;
-  carbohidratos_g: number;
-  hierro_mg: number;
-  calcio_mg: number;
-  zinc_mg: number;
-  vitamina_a_rae: number;
-  presentacion_comercial_gramos: number;
-  tipo_empaque: string;
-}
-
-interface MetaRIEN {
-  id: number;
-  grupo_poblacional: string;
-  tiempo_comida: string;
-  kcal_meta: number;
-  proteina_meta: number;
-  hierro_meta: number;
-  vitamina_a_meta: number;
-}
+import HogaresTab from '@/components/HogaresTab';
+import type { AlimentoTCAC, MetaRIEN } from '@prisma/client';
 
 interface MinutaItem {
   alimentoId: number;
   gramosNetos: number;
 }
 
+interface CurrentUser {
+  id: number;
+  email: string;
+  nombre: string;
+  rol: string;
+  unidad_id?: number | null;
+  unidad?: {
+    id: number;
+    nombre: string;
+    codigo_uds: string | null;
+  } | null;
+}
+
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'designer' | 'tcac' | 'compras' | 'reportes' | 'ciclo_menus'>('designer');
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState<'designer' | 'tcac' | 'compras' | 'reportes' | 'ciclo_menus' | 'hogares'>('designer');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
 
   // State
   const [tcacDatabase, setTcacDatabase] = useState<AlimentoTCAC[]>([]);
@@ -71,6 +65,17 @@ export default function Home() {
   const [modalidad, setModalidad] = useState('FAMI');
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (e) {
+      console.error('Error en logout:', e);
+    } finally {
+      router.push('/login');
+      router.refresh();
+    }
+  };
 
   // Minuta ingredients state
   const [itemsMinuta, setItemsMinuta] = useState<MinutaItem[]>([
@@ -114,13 +119,20 @@ export default function Home() {
     async function fetchData() {
       try {
         setLoading(true);
-        const [resTcac, resRien] = await Promise.all([
+        const [resTcac, resRien, resMe] = await Promise.all([
           fetch('/api/tcac'),
           fetch('/api/rien'),
+          fetch('/api/auth/me'),
         ]);
 
         const tcacData = await resTcac.json();
         const rienData = await resRien.json();
+        if (resMe.ok) {
+          const meData = await resMe.json();
+          if (meData.authenticated && meData.user) {
+            setCurrentUser(meData.user);
+          }
+        }
 
         setTcacDatabase(tcacData);
         setMetasRien(rienData);
@@ -329,93 +341,169 @@ export default function Home() {
 
   const gruposAlimentosUnicos = Array.from(new Set(tcacDatabase.map((a) => a.grupo_alimento)));
 
+  const navItems = [
+    { id: 'designer' as const, label: 'Diseñador y Semáforo', icon: Utensils, badge: 'RIEN' },
+    { id: 'tcac' as const, label: 'Catálogo TCAC', icon: BookOpen, badge: tcacDatabase.length.toString() },
+    { id: 'ciclo_menus' as const, label: 'Ciclo de Menús', icon: FileSpreadsheet, badge: '25 días' },
+    { id: 'hogares' as const, label: 'Hogares HCB & Niños', icon: Building },
+    { id: 'compras' as const, label: 'Proyección de Compras', icon: ShoppingBag },
+    { id: 'reportes' as const, label: 'Reportes PDF & Firmas', icon: FileText },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col">
-      {/* Header */}
-      <header className="bg-emerald-700 text-white shadow-md">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <div className="bg-emerald-800 p-2.5 rounded-xl border border-emerald-600">
-              <Utensils className="w-7 h-7 text-emerald-300" />
+    <div className="flex h-screen bg-slate-100 text-slate-800 overflow-hidden font-sans">
+      {/* SIDEBAR LATERAL IZQUIERDO */}
+      <aside
+        className={`bg-slate-900 text-slate-200 flex flex-col border-r border-slate-800 transition-all duration-300 z-30 shrink-0 ${
+          isSidebarCollapsed ? 'w-20' : 'w-64'
+        }`}
+      >
+        {/* Brand Header */}
+        <div className="p-4 border-b border-slate-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="bg-emerald-600 p-2.5 rounded-xl text-white shadow-md shadow-emerald-900/30 shrink-0">
+              <Utensils className="w-5 h-5" />
             </div>
-            <div>
-              <h1 className="text-2xl font-extrabold tracking-tight">NutriICBF</h1>
-              <p className="text-xs text-emerald-200">
-                Plataforma Web para Automatización de Minutas, TCAC y Compras ICBF
-              </p>
-            </div>
+            {!isSidebarCollapsed && (
+              <div className="truncate">
+                <h1 className="font-extrabold text-base text-white tracking-tight leading-none">NutriICBF</h1>
+                <span className="text-[10px] text-emerald-400 font-medium">Plataforma Nutricional</span>
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-2">
-            <span className="px-2.5 py-1 text-xs font-semibold bg-emerald-800 rounded-full border border-emerald-600 text-emerald-100">
-              Modalidades: FAMI • CDI • RPP
+          <button
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+            title={isSidebarCollapsed ? 'Expandir menú lateral' : 'Colapsar menú lateral'}
+          >
+            {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+          </button>
+        </div>
+
+        {/* Navigation Items */}
+        <nav className="flex-1 p-3 space-y-1.5 overflow-y-auto">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                title={isSidebarCollapsed ? item.label : undefined}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-xs transition-all text-left cursor-pointer ${
+                  isActive
+                    ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-700/40 font-semibold'
+                    : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+                } ${isSidebarCollapsed ? 'justify-center px-0' : ''}`}
+              >
+                <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                {!isSidebarCollapsed && (
+                  <div className="flex-1 flex items-center justify-between truncate">
+                    <span className="truncate">{item.label}</span>
+                    {item.badge !== undefined && (
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-bold ml-2 ${
+                          isActive ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        {item.badge}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* User profile & Logout en Sidebar */}
+        <div className="p-3 border-t border-slate-800 bg-slate-950/70">
+          {!isSidebarCollapsed ? (
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-600/30 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold text-xs shrink-0">
+                  {currentUser?.nombre ? currentUser.nombre.charAt(0).toUpperCase() : 'U'}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold text-white truncate" title={currentUser?.nombre || 'Usuario ICBF'}>
+                    {currentUser?.nombre || 'Usuario ICBF'}
+                  </div>
+                  <div className="text-[10px] text-emerald-400 font-medium truncate flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    {currentUser?.rol || 'NUTRICIONISTA'}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-300 hover:text-white bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 transition-colors cursor-pointer"
+                title="Cerrar sesión"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Cerrar Sesión</span>
+              </button>
+
+              <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-800/80 truncate">
+                Modalidades ICBF • 2026
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2">
+              <div
+                className="w-8 h-8 rounded-lg bg-emerald-600/30 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold text-xs"
+                title={`${currentUser?.nombre || 'Usuario'} (${currentUser?.rol || 'NUTRICIONISTA'})`}
+              >
+                {currentUser?.nombre ? currentUser.nombre.charAt(0).toUpperCase() : 'U'}
+              </div>
+              <button
+                onClick={handleLogout}
+                className="p-1.5 rounded-lg text-rose-400 hover:text-white hover:bg-rose-900/60 transition-colors cursor-pointer"
+                title="Cerrar Sesión"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      </aside>
+
+      {/* ÁREA DE CONTENIDO PRINCIPAL */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        {/* Topbar Superior Ligera */}
+        <header className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between sticky top-0 z-20 shadow-2xs">
+          <div>
+            <h2 className="text-base font-extrabold text-slate-900 leading-tight">
+              {navItems.find((n) => n.id === activeTab)?.label}
+            </h2>
+            <p className="text-[11px] text-slate-500">ICBF • Automatización de Minutas, TCAC, Compras y Hogares</p>
+          </div>
+          <div className="flex items-center gap-2.5">
+            {currentUser && (
+              <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <span className="font-medium text-slate-800">{currentUser.nombre}</span>
+                <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded">
+                  {currentUser.rol}
+                </span>
+              </div>
+            )}
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer"
+              title="Cerrar Sesión"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Salir</span>
+            </button>
+            <span className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-50 text-emerald-700 rounded-full border border-emerald-200">
+              ICBF Oficial
             </span>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Tabs Navigation */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 flex gap-2 overflow-x-auto">
-          <button
-            onClick={() => setActiveTab('designer')}
-            className={`flex items-center gap-2 px-5 py-3.5 font-medium text-sm border-b-2 whitespace-nowrap transition-colors ${
-              activeTab === 'designer'
-                ? 'border-emerald-600 text-emerald-700 font-semibold'
-                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
-            }`}
-          >
-            <Utensils className="w-4 h-4" />
-            Diseñador de Minutas y Semáforo
-          </button>
-          <button
-            onClick={() => setActiveTab('tcac')}
-            className={`flex items-center gap-2 px-5 py-3.5 font-medium text-sm border-b-2 whitespace-nowrap transition-colors ${
-              activeTab === 'tcac'
-                ? 'border-emerald-600 text-emerald-700 font-semibold'
-                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
-            }`}
-          >
-            <BookOpen className="w-4 h-4" />
-            Catálogo TCAC ({tcacDatabase.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('compras')}
-            className={`flex items-center gap-2 px-5 py-3.5 font-medium text-sm border-b-2 whitespace-nowrap transition-colors ${
-              activeTab === 'compras'
-                ? 'border-emerald-600 text-emerald-700 font-semibold'
-                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
-            }`}
-          >
-            <ShoppingBag className="w-4 h-4" />
-            Proyección Logística de Compras
-          </button>
-          <button
-            onClick={() => setActiveTab('reportes')}
-            className={`flex items-center gap-2 px-5 py-3.5 font-medium text-sm border-b-2 whitespace-nowrap transition-colors ${
-              activeTab === 'reportes'
-                ? 'border-emerald-600 text-emerald-700 font-semibold'
-                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            Reportes PDF & Firmas
-          </button>
-          <button
-            onClick={() => setActiveTab('ciclo_menus')}
-            className={`flex items-center gap-2 px-5 py-3.5 font-medium text-sm border-b-2 whitespace-nowrap transition-colors ${
-              activeTab === 'ciclo_menus'
-                ? 'border-emerald-600 text-emerald-700 font-semibold'
-                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
-            }`}
-          >
-            <BookOpen className="w-4 h-4" />
-            Minutas
-          </button>
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6">
+        {/* Main Content Area */}
+        <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 text-slate-500">
             <RefreshCw className="w-8 h-8 animate-spin text-emerald-600 mb-2" />
@@ -1054,11 +1142,28 @@ export default function Home() {
                 <MinutasTab tcacDatabase={tcacDatabase} />
               </div>
             )}
+
+            {/* TAB 6: HOGARES HCB & NIÑOS */}
+            {activeTab === 'hogares' && (
+              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
+                <div className="border-b border-slate-100 pb-4">
+                  <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <Building className="w-6 h-6 text-emerald-600" />
+                    Hogares Comunitarios de Bienestar (HCB) y Niños Beneficiarios
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Administra las Unidades de Servicio (UDS), Madres Comunitarias, listados de niños vinculados y carnets digitales de nutrición con cálculo dinámico de edad.
+                  </p>
+                </div>
+                <HogaresTab />
+              </div>
+            )}
           </>
         )}
       </main>
+    </div>
 
-      {/* Modal: Register New Food */}
+    {/* Modal: Register New Food */}
       {showAddFoodModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto">

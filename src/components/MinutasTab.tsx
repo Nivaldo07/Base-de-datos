@@ -1,21 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Save, Plus, Trash2, Upload, ChevronDown, ChevronRight, FileSpreadsheet } from 'lucide-react';
 import * as XLSX from 'xlsx';
-
-interface AlimentoTCAC {
-  id: number;
-  codigo_icbf: string | null;
-  nombre: string;
-  energia_kcal: number;
-  proteina_g: number;
-  grasa_g: number;
-  carbohidratos_g: number;
-  vitamina_a_rae: number;
-  calcio_mg: number;
-  hierro_mg: number;
-  zinc_mg: number;
-  sodio_mg: number;
-}
+import type { AlimentoTCAC } from '@prisma/client';
 
 interface GrupoEtario {
   id: number;
@@ -102,6 +88,43 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
       preps.splice(pIndex, 1);
     }
     setMenuCurrent({ ...menuCurrent, preparaciones: preps });
+  };
+
+  const removePreparacion = (pIndex: number) => {
+    if (!menuCurrent) return;
+    const preps = [...menuCurrent.preparaciones];
+    const prepNombre = preps[pIndex]?.nombre || 'esta preparación';
+    if (!window.confirm(`¿Deseas eliminar la preparación "${prepNombre}" y todos sus ingredientes?`)) return;
+    preps.splice(pIndex, 1);
+    setMenuCurrent({ ...menuCurrent, preparaciones: preps });
+  };
+
+  const deleteMenu = async () => {
+    if (!selectedGrupo || !selectedDia) return;
+    const confirmDelete = window.confirm(`¿Estás seguro de que deseas vaciar/eliminar toda la información del Menú ${selectedDia}? Esta acción borrará los datos de la plataforma.`);
+    if (!confirmDelete) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/menus?grupo_etario_id=${selectedGrupo}&numero_dia=${selectedDia}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setMenuCurrent({
+          numero_dia: selectedDia,
+          grupo_etario_id: selectedGrupo,
+          preparaciones: []
+        });
+        alert(`El Menú ${selectedDia} ha sido vaciado.`);
+      } else {
+        alert('Error al eliminar el menú.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error de conexión al eliminar menú.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const saveMenu = async () => {
@@ -284,11 +307,21 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
           <button
             onClick={saveMenu}
             disabled={loading}
-            className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded hover:bg-emerald-700 disabled:opacity-50"
+            className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-xs"
           >
             <Save className="h-3 w-3" />
             {loading ? 'Cargando...' : 'Guardar en Plataforma'}
           </button>
+          {menuCurrent?.preparaciones?.length > 0 && (
+            <button
+              onClick={deleteMenu}
+              disabled={loading}
+              className="flex items-center gap-1 px-3 py-1.5 bg-rose-50 text-rose-700 text-xs font-bold rounded hover:bg-rose-100 border border-rose-200 disabled:opacity-50 transition-colors"
+              title="Vaciar / Eliminar todas las preparaciones de este menú"
+            >
+              <Trash2 className="h-3 w-3" /> Vaciar Menú
+            </button>
+          )}
         </div>
       </div>
 
@@ -354,7 +387,12 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
                             </td>
                             <td className="px-1 py-1 border-r border-slate-200 bg-white">
                               {isFirst && (
-                                <input type="text" value={row.prep.nombre} onChange={e => updatePrepField(row.pIndex, 'nombre', e.target.value)} className="w-40 bg-transparent outline-none uppercase font-bold" />
+                                <div className="flex items-center justify-between gap-1">
+                                  <input type="text" value={row.prep.nombre} onChange={e => updatePrepField(row.pIndex, 'nombre', e.target.value)} className="w-full bg-transparent outline-none uppercase font-bold" />
+                                  <button type="button" onClick={() => removePreparacion(row.pIndex)} title="Eliminar preparación entera" className="text-slate-300 hover:text-rose-600 p-0.5 transition-colors">
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               )}
                             </td>
                             <td className="px-1 py-1 border-r border-slate-200 font-mono text-slate-600">{alim?.codigo_icbf || ''}</td>
