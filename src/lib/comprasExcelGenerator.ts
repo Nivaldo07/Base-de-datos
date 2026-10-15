@@ -152,20 +152,20 @@ function construirHojaDiariaMenu(
   const ws = XLSX.utils.aoa_to_sheet(wsData);
 
   ws['!cols'] = [
-    { wch: 3 },  // Col A: margen
-    { wch: 20 }, // Col B: Tiempo de comida
-    { wch: 24 }, // Col C: Preparación
-    { wch: 12 }, // Col D: Cód. TCAC
-    { wch: 38 }, // Col E: Ingrediente / Alimento
-    { wch: 16 }, // Col F: P. Bruto < 3a (g)
-    { wch: 16 }, // Col G: P. Bruto ≥ 3a (g)
-    { wch: 14 }, // Col H: Menor de 3 (g)
-    { wch: 14 }, // Col I: Mayor de 3 (g)
-    { wch: 16 }, // Col J: Total Día (g)
+    { wch: 2 },  // Col A: margen
+    { wch: 18 }, // Col B: Tiempo de comida
+    { wch: 22 }, // Col C: Preparación
+    { wch: 10 }, // Col D: Cód. TCAC
+    { wch: 32 }, // Col E: Ingrediente / Alimento
+    { wch: 12 }, // Col F: P. Bruto < 3a (g)
+    { wch: 12 }, // Col G: P. Bruto ≥ 3a (g)
+    { wch: 11 }, // Col H: Menor de 3 (g)
+    { wch: 11 }, // Col I: Mayor de 3 (g)
+    { wch: 12 }, // Col J: Total Día (g)
   ];
 
   ws['!pageSetup'] = { paperSize: 1, orientation: 'landscape', fitToWidth: 1, fitToHeight: 1 };
-  ws['!margins'] = { left: 0.4, right: 0.4, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 };
+  ws['!margins'] = { left: 0.3, right: 0.3, top: 0.35, bottom: 0.35, header: 0.15, footer: 0.15 };
 
   return ws;
 }
@@ -224,13 +224,13 @@ function construirHojaMadreComunitaria(
   wsPlanilla['B1'] = { t: 's', v: textoLegalEncabezado };
 
   wsPlanilla['!cols'] = [
-    { wch: 4 },  // Col A
-    { wch: 55 }, // Col B: Producto
-    { wch: 35 }, // Col C: Unidad de Medida (Gramos - mL)
+    { wch: 2 },  // Col A
+    { wch: 48 }, // Col B: Producto
+    { wch: 26 }, // Col C: Unidad de Medida (Gramos - mL)
   ];
 
   wsPlanilla['!pageSetup'] = { paperSize: 1, orientation: 'portrait', fitToWidth: 1, fitToHeight: 1 };
-  wsPlanilla['!margins'] = { left: 0.4, right: 0.4, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 };
+  wsPlanilla['!margins'] = { left: 0.3, right: 0.3, top: 0.35, bottom: 0.35, header: 0.15, footer: 0.15 };
 
   return wsPlanilla;
 }
@@ -239,7 +239,7 @@ function construirHojaMadreComunitaria(
  * Parchea el XML de una hoja de cálculo para forzar ajuste a 1 página (Letter, fitToPage)
  * según el estándar OpenXML (ECMA-376).
  */
-function patchSheetXml(xml: string, orientation: 'landscape' | 'portrait'): string {
+function patchSheetXml(xml: string, orientation: 'landscape' | 'portrait', isMadreHoja?: boolean): string {
   // 1. <sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
   // En OpenXML, sheetPr DEBE ir antes de dimension, sheetViews, etc.
   if (xml.includes('<sheetPr')) {
@@ -252,12 +252,20 @@ function patchSheetXml(xml: string, orientation: 'landscape' | 'portrait'): stri
     xml = xml.replace(/(<worksheet[^>]*>)/, '$1<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
   }
 
-  // 2. Eliminar pageMargins y pageSetup previos si existen
+  // 2. sheetViews -> vista previa de salto de página (pageBreakPreview), idéntico a la plantilla oficial ICBF
+  if (xml.includes('<sheetViews>')) {
+    xml = xml.replace(
+      /<sheetViews>[\s\S]*?<\/sheetViews>/,
+      '<sheetViews><sheetView tabSelected="1" view="pageBreakPreview" zoomScale="60" zoomScaleNormal="100" workbookViewId="0"/></sheetViews>'
+    );
+  }
+
+  // 3. Eliminar pageMargins y pageSetup previos si existen
   xml = xml.replace(/<pageMargins[^>]*\/>/g, '');
   xml = xml.replace(/<pageSetup[^>]*\/>/g, '');
 
-  // 3. Insertar configuración de márgenes y tamaño Carta (paperSize: 1, fitToWidth: 1, fitToHeight: 1)
-  const pageSetupTags = `<pageMargins left="0.4" right="0.4" top="0.4" bottom="0.4" header="0.2" footer="0.2"/><pageSetup paperSize="1" orientation="${orientation}" fitToWidth="1" fitToHeight="1"/>`;
+  // 4. Insertar configuración de márgenes y tamaño Carta (paperSize: 1, fitToWidth: 1, fitToHeight: 1)
+  const pageSetupTags = `<pageMargins left="0.3" right="0.3" top="0.35" bottom="0.35" header="0.15" footer="0.15"/><pageSetup paperSize="1" orientation="${orientation}" fitToWidth="1" fitToHeight="1"/>`;
 
   const insertRegex = /(<headerFooter|<rowBreaks|<colBreaks|<customProperties|<cellWatches|<ignoredErrors|<smartTags|<drawing|<legacyDrawing|<\/worksheet)/;
   if (insertRegex.test(xml)) {

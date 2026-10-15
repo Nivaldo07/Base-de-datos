@@ -726,7 +726,7 @@ export default function ComprasTab() {
   );
 
   // 1. Manejo de exportación a Excel (.xlsx) de la Semana Actual
-  const handleDescargarExcel = () => {
+  const handleDescargarExcel = async () => {
     const consolidadoFinal: ItemPlanillaExcel[] = consolidadoPlanilla.map((p) => ({
       producto: p.producto,
       totalGramos: p.totalGramos,
@@ -735,15 +735,15 @@ export default function ComprasTab() {
       empaquesSugeridos: Math.ceil(p.totalGramos / (p.presentacionGramos || 1000)),
     }));
 
-    generarExcelProyeccionYPlanilla(diasCalculados, consolidadoFinal, metadatosCompletos);
+    await generarExcelProyeccionYPlanilla(diasCalculados, consolidadoFinal, metadatosCompletos);
   };
 
   // 2. Manejo de exportación a Excel (.xlsx) del Ciclo Completo (5 Semanas)
-  const handleDescargarExcelCicloCompleto = () => {
+  const handleDescargarExcelCicloCompleto = async () => {
     const todasLasSemanas: SemanaProyeccionExcel[] = SEMANAS_PRESET.map((s) =>
       obtenerDatosDeSemana(s.id)
     );
-    generarExcelCicloCompleto(todasLasSemanas, metadatosCompletos);
+    await generarExcelCicloCompleto(todasLasSemanas, metadatosCompletos);
   };
 
   // 3. Manejo de exportación a PDF de la Semana Completa (5 Días Detallados + Planilla Oficial)
