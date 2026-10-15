@@ -315,62 +315,81 @@ export function generarPDFPlanillaEntrega(
  */
 import { DEFAULT_LOGO_BASE64 } from './defaultLogoBase64';
 
-export function generarPDFPlanillaEntregaOficialUDS(
-  meta: {
-    eas: string;
-    nit: string;
-    contrato: string;
-    municipio: string;
-    nombreUds: string;
-    madreComunitaria: string;
-    fechaEntrega: string;
-    diasCicloTexto: string;
-    fechaInicio: string;
-    fechaFin: string;
-    logoBase64?: string;
-  },
-  items: Array<{
-    producto: string;
-    totalGramos: number;
-    unidad?: string;
-  }>
+export interface MetaPlanillaEntregaPDF {
+  eas: string;
+  nit: string;
+  contrato: string;
+  municipio: string;
+  nombreUds: string;
+  madreComunitaria: string;
+  fechaEntrega: string;
+  diasCicloTexto: string;
+  fechaInicio: string;
+  fechaFin: string;
+  logoBase64?: string;
+}
+
+export interface ItemPlanillaEntregaPDF {
+  producto: string;
+  totalGramos: number;
+  unidad?: string;
+}
+
+/**
+ * Función auxiliar para dibujar una página completa de la Planilla Oficial de Entrega
+ * Con márgenes estrictos de seguridad para que el texto centrado NUNCA choque con el logo oficial
+ */
+function dibujarPaginaPlanillaEntrega(
+  doc: jsPDF,
+  meta: MetaPlanillaEntregaPDF,
+  items: ItemPlanillaEntregaPDF[]
 ) {
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const centerX = pageWidth / 2;
+  const headerX = 108;
+  const maxHeaderWidth = 125;
 
-  // 1. Dibujar Logo Oficial en la esquina superior derecha
+  // 1. Dibujar Logo Oficial en la esquina superior derecha (x = 176, y = 8, w = 25, h = 25)
   const logoToUse = meta.logoBase64 || DEFAULT_LOGO_BASE64;
   if (logoToUse) {
     try {
-      const logoSize = 25;
-      doc.addImage(logoToUse, 'JPEG', pageWidth - 14 - logoSize, 8, logoSize, logoSize);
+      doc.addImage(logoToUse, 'JPEG', 176, 8, 25, 25);
     } catch (e) {
       console.warn('No se pudo incrustar el logo en el PDF:', e);
     }
   }
 
-  // 2. Encabezado institucional estrictamente centrado en el ancho completo de la página
+  // 2. Encabezado institucional estrictamente centrado y acotado a maxWidth: 125
   doc.setTextColor(15, 23, 42);
-  doc.setFontSize(12);
+  doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('PLANILLA DE ENTREGA DE ALIMENTOS', centerX, 14, { align: 'center' });
+  doc.text('PLANILLA DE ENTREGA DE ALIMENTOS', headerX, 13, { align: 'center', maxWidth: maxHeaderWidth });
 
-  doc.setFontSize(8.5);
+  doc.setFontSize(7.5);
   doc.setFont('helvetica', 'bold');
-  doc.text(`ENTIDAD ADMINISTRADORA DEL SERVICIO: ${meta.eas || 'ASOCIACION DE FAMILIA DE HCB DE CAIMITO-SUCRE'}`, centerX, 19, { align: 'center' });
-  doc.text(`NIT: ${meta.nit || '8230002828 - 6'}`, centerX, 24, { align: 'center' });
-  doc.text(`CONTRATO N°: ${meta.contrato || '70005732024'}`, centerX, 29, { align: 'center' });
-  doc.text(`MUNICIPIO: ${meta.municipio || 'CAIMITO-SUCRE'}`, centerX, 34, { align: 'center' });
-  doc.text(`NOMBRE DEL HCB: ${meta.nombreUds || 'Travesuras Infantiles'}`, centerX, 39, { align: 'center' });
-  doc.text(`NOMBRE DE LA MADRE COMUNITARIA: ${meta.madreComunitaria || 'Ana Acevedo'}`, centerX, 44, { align: 'center' });
+  let currentY = 17.5;
+  const lineGap = 4.0;
+
+  const lineasEncabezado = [
+    `ENTIDAD ADMINISTRADORA DEL SERVICIO: ${meta.eas || 'ASOCIACION DE FAMILIA DE HCB DE CAIMITO-SUCRE'}`,
+    `NIT: ${meta.nit || '8230002828 - 6'}`,
+    `CONTRATO N°: ${meta.contrato || '70005732024'}`,
+    `MUNICIPIO: ${meta.municipio || 'CAIMITO-SUCRE'}`,
+    `NOMBRE DEL HCB: ${meta.nombreUds || 'Travesuras Infantiles'}`,
+    `NOMBRE DE LA MADRE COMUNITARIA: ${meta.madreComunitaria || 'Ana Acevedo'}`
+  ];
+
+  for (const linea of lineasEncabezado) {
+    doc.text(linea, headerX, currentY, { align: 'center', maxWidth: maxHeaderWidth });
+    const splitLines = doc.splitTextToSize(linea, maxHeaderWidth);
+    currentY += splitLines.length > 1 ? lineGap * splitLines.length : lineGap;
+  }
 
   // 3. Declaración Legal Oficial Dinámica
-  let y = 49;
+  let y = Math.max(currentY + 2, 45);
   doc.setFillColor(248, 250, 252);
   doc.roundedRect(14, y, pageWidth - 28, 14, 2, 2, 'F');
-  doc.setFontSize(8);
+  doc.setFontSize(7.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(30, 41, 59);
 
@@ -429,7 +448,7 @@ export function generarPDFPlanillaEntregaOficialUDS(
   });
 
   const finalY = (doc as any).lastAutoTable.finalY || 230;
-  let signatureY = finalY + 16;
+  let signatureY = finalY + 14;
 
   // Si no cabe en la misma página, añadir nueva página
   if (signatureY > pageHeight - 35) {
@@ -456,9 +475,42 @@ export function generarPDFPlanillaEntregaOficialUDS(
   doc.setFont('helvetica', 'normal');
   doc.text('Nutricionista / Supervisor ICBF / EAS', 157, signatureY + 8, { align: 'center' });
   doc.text('T.P. / C.C. ________________________________', 157, signatureY + 12, { align: 'center' });
+}
+
+export function generarPDFPlanillaEntregaOficialUDS(
+  meta: MetaPlanillaEntregaPDF,
+  items: ItemPlanillaEntregaPDF[]
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+  dibujarPaginaPlanillaEntrega(doc, meta, items);
 
   const safeName = (meta.nombreUds || 'UDS').replace(/[^a-zA-Z0-9_-]/g, '_');
   doc.save(`Planilla_Entrega_${safeName}_Menus_${meta.diasCicloTexto}.pdf`);
 }
+
+/**
+ * Genera un único documento PDF con las planillas oficiales de TODAS las 5 semanas del ciclo
+ */
+export function generarPDFPlanillasTodasLasSemanas(
+  semanas: Array<{
+    meta: MetaPlanillaEntregaPDF;
+    consolidado: ItemPlanillaEntregaPDF[];
+    numeroSemana: number;
+  }>
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+
+  semanas.forEach((sem, idx) => {
+    if (idx > 0) {
+      doc.addPage();
+    }
+    dibujarPaginaPlanillaEntrega(doc, sem.meta, sem.consolidado);
+  });
+
+  const firstMeta = semanas[0]?.meta;
+  const safeName = (firstMeta?.nombreUds || 'UDS').replace(/[^a-zA-Z0-9_-]/g, '_');
+  doc.save(`Planillas_Entrega_CicloCompleto_5Semanas_${safeName}.pdf`);
+}
+
 
 

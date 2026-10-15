@@ -36,12 +36,15 @@ import {
 } from 'lucide-react';
 import {
   generarExcelProyeccionYPlanilla,
+  generarExcelCicloCompleto,
   DiaProyeccionExcel,
   ItemPlanillaExcel,
   MetadatosPlanillaExcel,
+  SemanaProyeccionExcel,
 } from '@/lib/comprasExcelGenerator';
 import {
   generarPDFPlanillaEntregaOficialUDS,
+  generarPDFPlanillasTodasLasSemanas,
   generarPDFListaCompras,
 } from '@/lib/pdfGenerator';
 import { calcularEdadICBF } from '@/lib/ageCalculator';
@@ -613,7 +616,115 @@ export default function ComprasTab() {
     };
   }, [metaInstitucional, modoVista, udsSeleccionada, hogares.length, textoCiclo, demografiaActiva, logoUrl]);
 
-  // Manejo de exportación a Excel (.xlsx)
+  // Función auxiliar para calcular los datos completos (días + consolidado + metadatos) de cualquier semana (1..5)
+  const obtenerDatosDeSemana = useCallback(
+    (semanaId: number) => {
+      const preset = SEMANAS_PRESET.find((s) => s.id === semanaId) || SEMANAS_PRESET[0];
+      const diasResult: DiaProyeccionExcel[] = [];
+      const mapaProductos = new Map<string, ItemPlanillaExcel>();
+
+      // Si es la semana seleccionada actualmente, usar los días y su estado activo/inactivo editado
+      const esSemanaActual = semanaId === semanaSeleccionadaId;
+
+      for (let i = 0; i < preset.dias.length; i++) {
+        const numDia = preset.dias[i];
+        const diaCfgActual = esSemanaActual ? diasConfig[i] : null;
+        const diaActivo = diaCfgActual ? diaCfgActual.activo : true;
+        const motivoAnulacion = diaCfgActual ? diaCfgActual.motivoAnulacion : '';
+
+        const itemsBase = itemsPorDia[numDia] || extraerItemsDeMenu(numDia, menusCiclo, idGrupoMenores, idGrupoMayores);
+        const itemsConTotales = itemsBase.map((it) => {
+          let totalMenor = 0;
+          let totalMayor = 0;
+          let totalDia = 0;
+
+          if (diaActivo) {
+            totalMenor = Math.round(it.gMenor * demografiaActiva.menores3 * 10) / 10;
+            totalMayor = Math.round(it.gMayor * demografiaActiva.mayores3 * 10) / 10;
+            totalDia = Math.round((totalMenor + totalMayor) * 10) / 10;
+          }
+
+          return {
+            ...it,
+            totalMenor,
+            totalMayor,
+            totalDia,
+          };
+        });
+
+        diasResult.push({
+          diaSemana: NOMBRES_DIAS[i] || 'Día',
+          numeroDiaCiclo: numDia,
+          activo: diaActivo,
+          motivoAnulacion,
+          items: itemsConTotales,
+        });
+
+        if (diaActivo) {
+          for (const it of itemsConTotales) {
+            const nombreLimpio = it.nombre.trim();
+            const clave = nombreLimpio.toLowerCase();
+            const exist = mapaProductos.get(clave) || {
+              producto: nombreLimpio,
+              totalGramos: 0,
+              unidad:
+                nombreLimpio.toLowerCase().includes('leche') || nombreLimpio.toLowerCase().includes('aceite')
+                  ? 'Mililitros'
+                  : 'Gramos',
+              presentacionGramos: it.presentacionGramos || 1000,
+            };
+            exist.totalGramos = Math.round((exist.totalGramos + it.totalDia) * 10) / 10;
+            mapaProductos.set(clave, exist);
+          }
+        }
+      }
+
+      const consolidado = Array.from(mapaProductos.values()).sort((a, b) =>
+        a.producto.localeCompare(b.producto, 'es', { sensitivity: 'base' })
+      );
+
+      const metaSemana: MetadatosPlanillaExcel = {
+        eas: metaInstitucional.eas,
+        nit: metaInstitucional.nit,
+        contrato: metaInstitucional.contrato,
+        municipio: metaInstitucional.municipio,
+        nombreUds: modoVista === 'uds' ? udsSeleccionada?.nombre || 'Travesuras Infantiles' : `CONSOLIDADO GLOBAL (${hogares.length} UDS)`,
+        madreComunitaria: modoVista === 'uds' ? udsSeleccionada?.madre_comunitaria || 'Ana Acevedo' : 'Todas las Madres Comunitarias',
+        codigoUds: udsSeleccionada?.codigo_uds || 'UDS-001',
+        fechaEntrega: preset.entrega,
+        diasCicloTexto: `${preset.dias[0]} - ${preset.dias[preset.dias.length - 1]}`,
+        fechaInicio: preset.inicio,
+        fechaFin: preset.fin,
+        menores3: demografiaActiva.menores3,
+        mayores3: demografiaActiva.mayores3,
+        totalNinos: demografiaActiva.total,
+        logoBase64: logoUrl || undefined,
+      };
+
+      return {
+        numeroSemana: semanaId,
+        dias: diasResult,
+        consolidado,
+        meta: metaSemana,
+      };
+    },
+    [
+      semanaSeleccionadaId,
+      diasConfig,
+      itemsPorDia,
+      menusCiclo,
+      idGrupoMenores,
+      idGrupoMayores,
+      demografiaActiva,
+      metaInstitucional,
+      modoVista,
+      udsSeleccionada,
+      hogares.length,
+      logoUrl,
+    ]
+  );
+
+  // 1. Manejo de exportación a Excel (.xlsx) de la Semana Actual
   const handleDescargarExcel = () => {
     const consolidadoFinal: ItemPlanillaExcel[] = consolidadoPlanilla.map((p) => ({
       producto: p.producto,
@@ -626,9 +737,30 @@ export default function ComprasTab() {
     generarExcelProyeccionYPlanilla(diasCalculados, consolidadoFinal, metadatosCompletos);
   };
 
-  // Manejo de exportación a PDF de la Planilla Oficial (con Logo Actualizado)
+  // 2. Manejo de exportación a Excel (.xlsx) del Ciclo Completo (5 Semanas)
+  const handleDescargarExcelCicloCompleto = () => {
+    const todasLasSemanas: SemanaProyeccionExcel[] = SEMANAS_PRESET.map((s) =>
+      obtenerDatosDeSemana(s.id)
+    );
+    generarExcelCicloCompleto(todasLasSemanas, metadatosCompletos);
+  };
+
+  // 3. Manejo de exportación a PDF de la Planilla Oficial de la Semana Actual
   const handleDescargarPDFPlanilla = () => {
     generarPDFPlanillaEntregaOficialUDS(metadatosCompletos, consolidadoPlanilla);
+  };
+
+  // 4. Manejo de exportación a PDF de Todas las Semanas (5 Semanas Oficiales)
+  const handleDescargarPDFTodasLasSemanas = () => {
+    const todasLasSemanas = SEMANAS_PRESET.map((s) => {
+      const data = obtenerDatosDeSemana(s.id);
+      return {
+        numeroSemana: s.id,
+        meta: data.meta,
+        consolidado: data.consolidado,
+      };
+    });
+    generarPDFPlanillasTodasLasSemanas(todasLasSemanas);
   };
 
   // Manejo de actualización de gramajes en línea para un día
@@ -805,26 +937,48 @@ export default function ComprasTab() {
             title="Editar Entidad, Logo, Contrato, NIT y Fechas oficiales"
           >
             <Edit3 className="w-3.5 h-3.5 text-slate-600" />
-            Datos Institucionales & Logo
+            Datos & Logo
           </button>
 
-          <button
-            onClick={handleDescargarPDFPlanilla}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-xl transition-colors shadow-xs"
-            title="Generar e imprimir el PDF de la planilla oficial de entrega con logo y firmas"
-          >
-            <Printer className="w-4 h-4 text-slate-300" />
-            Imprimir Planilla PDF
-          </button>
+          {/* Grupo PDF Oficial: Semana Actual y Ciclo Completo (5 Semanas) */}
+          <div className="flex items-center rounded-xl bg-slate-800 p-0.5 shadow-xs">
+            <button
+              onClick={handleDescargarPDFPlanilla}
+              className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-white text-xs font-bold rounded-lg transition-colors"
+              title={`Generar e imprimir el PDF de la planilla oficial de entrega de la Semana ${semanaSeleccionadaId}`}
+            >
+              <Printer className="w-3.5 h-3.5 text-slate-300" />
+              PDF (Semana {semanaSeleccionadaId})
+            </button>
+            <button
+              onClick={handleDescargarPDFTodasLasSemanas}
+              className="flex items-center gap-1 px-2.5 py-2 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded-lg transition-colors border-l border-slate-700"
+              title="Descargar documento PDF con las planillas oficiales de entrega de las 5 semanas completas del ciclo"
+            >
+              <Layers className="w-3.5 h-3.5 text-amber-400" />
+              Todas (5 Sem PDF)
+            </button>
+          </div>
 
-          <button
-            onClick={handleDescargarExcel}
-            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-xs transition-colors"
-            title="Descargar libro Excel multi-pestaña con fórmulas y planilla oficial"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
-            Descargar Excel (.xlsx)
-          </button>
+          {/* Grupo Excel Oficial: Semana Actual y Ciclo Completo (5 Semanas) */}
+          <div className="flex items-center rounded-xl bg-emerald-700 p-0.5 shadow-xs">
+            <button
+              onClick={handleDescargarExcel}
+              className="flex items-center gap-1.5 px-3 py-2 hover:bg-emerald-800 text-white text-xs font-bold rounded-lg transition-colors"
+              title={`Descargar libro Excel oficial (5 menús diarios + planilla) de la Semana ${semanaSeleccionadaId}`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
+              Excel (Semana {semanaSeleccionadaId})
+            </button>
+            <button
+              onClick={handleDescargarExcelCicloCompleto}
+              className="flex items-center gap-1 px-2.5 py-2 hover:bg-emerald-800 text-amber-200 text-xs font-bold rounded-lg transition-colors border-l border-emerald-600"
+              title="Descargar libro Excel completo con las 5 semanas (25 menús diarios y las 5 planillas oficiales de entrega)"
+            >
+              <Layers className="w-3.5 h-3.5 text-amber-300" />
+              Ciclo Completo (5 Sem Excel)
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1138,27 +1292,28 @@ export default function ComprasTab() {
                 </label>
               </div>
 
-              {/* Encabezado Institucional Centrado (Idéntico a la muestra oficial ICBF) */}
-              <div className="w-full text-center space-y-1 pt-1 pb-2 px-4 sm:px-28">
-                <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-wide uppercase">
+              {/* Encabezado Institucional Centrado (Acotado con márgenes seguros para evitar colisión con el logo) */}
+              <div className="w-full max-w-xl sm:max-w-2xl mx-auto text-center space-y-1 pt-1 pb-2 px-6 sm:px-12">
+                <h3 className="text-xs sm:text-sm font-black text-slate-900 tracking-wide uppercase">
                   PLANILLA DE ENTREGA DE ALIMENTOS
                 </h3>
-                <p className="text-xs font-bold text-slate-800 uppercase">
-                  ENTIDAD ADMINISTRADORA DEL SERVICIO: <span className="font-extrabold text-slate-900">{metaInstitucional.eas}</span>
+                <p className="text-[11px] sm:text-xs font-bold text-slate-800 uppercase leading-snug">
+                  ENTIDAD ADMINISTRADORA DEL SERVICIO: <br className="sm:hidden" />
+                  <span className="font-extrabold text-slate-900">{metaInstitucional.eas}</span>
                 </p>
-                <p className="text-xs text-slate-700 font-bold uppercase">
+                <p className="text-[11px] sm:text-xs text-slate-700 font-bold uppercase">
                   NIT: {metaInstitucional.nit}
                 </p>
-                <p className="text-xs text-slate-700 font-bold uppercase">
+                <p className="text-[11px] sm:text-xs text-slate-700 font-bold uppercase">
                   CONTRATO N°: {metaInstitucional.contrato}
                 </p>
-                <p className="text-xs text-slate-700 font-bold uppercase">
+                <p className="text-[11px] sm:text-xs text-slate-700 font-bold uppercase">
                   MUNICIPIO: {metaInstitucional.municipio}
                 </p>
-                <p className="text-xs text-slate-800 font-bold uppercase">
+                <p className="text-[11px] sm:text-xs text-slate-800 font-bold uppercase">
                   NOMBRE DEL HCB: <span className="text-emerald-800 font-extrabold">{metadatosCompletos.nombreUds}</span>
                 </p>
-                <p className="text-xs text-slate-800 font-bold uppercase">
+                <p className="text-[11px] sm:text-xs text-slate-800 font-bold uppercase">
                   NOMBRE DE LA MADRE COMUNITARIA: <span className="text-slate-900 font-extrabold">{metadatosCompletos.madreComunitaria}</span>
                 </p>
               </div>
