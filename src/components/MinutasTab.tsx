@@ -18,6 +18,7 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
   const [selectedDia, setSelectedDia] = useState<number>(1);
   const [menuCurrent, setMenuCurrent] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('Cargando documento...');
   const [isGridExpanded, setIsGridExpanded] = useState(true);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -148,6 +149,47 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Support PDF extraction via API
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (selectedGrupo) formData.append('grupo_etario_id', String(selectedGrupo));
+      if (selectedDia) formData.append('numero_dia', String(selectedDia));
+
+      setLoading(true);
+      setLoadingMessage('Analizando minuta en PDF...');
+      fetch('/api/menus/import-pdf', {
+        method: 'POST',
+        body: formData
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || 'Error al importar el archivo PDF');
+          }
+          return res.json();
+        })
+        .then((resultData) => {
+          setMenuCurrent(resultData);
+          if (resultData.detected_dia) {
+            setSelectedDia(resultData.detected_dia);
+          }
+          alert(`¡Minuta importada exitosamente desde PDF! (Menú ${resultData.numero_dia || selectedDia})`);
+          setIsGridExpanded(true);
+        })
+        .catch((err: any) => {
+          console.error(err);
+          alert(err?.message || 'Hubo un problema importando el PDF. Asegúrate de que sea el formato oficial ICBF.');
+        })
+        .finally(() => {
+          setLoading(false);
+          setLoadingMessage('Cargando documento...');
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        });
+      return;
+    }
+
+    // Excel and CSV handling
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -159,6 +201,7 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
         const csvData = XLSX.utils.sheet_to_json(ws, { header: 1 });
         
         setLoading(true);
+        setLoadingMessage('Cargando archivo Excel...');
         const response = await fetch('/api/menus/import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -180,6 +223,7 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
         alert('Hubo un problema importando el archivo. Asegúrate de que sea el formato correcto.');
       } finally {
         setLoading(false);
+        setLoadingMessage('Cargando documento...');
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     };
@@ -293,16 +337,17 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
         <div className="flex gap-2">
           <input 
             type="file" 
-            accept=".xlsx, .xls, .csv" 
+            accept=".xlsx, .xls, .csv, .pdf" 
             className="hidden" 
             ref={fileInputRef} 
             onChange={handleFileUpload} 
           />
           <button
             onClick={triggerFileInput}
-            className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded hover:bg-blue-100 border border-blue-200"
+            disabled={loading}
+            className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded hover:bg-blue-100 border border-blue-200 disabled:opacity-50 transition-colors"
           >
-            <Upload className="h-3 w-3" /> Cargar Archivo .xlsx / .csv
+            <Upload className="h-3 w-3" /> Cargar Archivo (.xlsx / .csv / .pdf)
           </button>
           <button
             onClick={saveMenu}
@@ -325,9 +370,18 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
         </div>
       </div>
 
+      {loading && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-2.5 rounded text-xs flex items-center justify-between animate-pulse">
+          <span className="flex items-center gap-2 font-medium">
+            <FileSpreadsheet className="h-4 w-4" />
+            {loadingMessage}
+          </span>
+        </div>
+      )}
+
       {loading && !menuCurrent ? (
         <div className="text-center p-8 text-slate-500 text-sm flex items-center justify-center gap-2">
-          <FileSpreadsheet className="h-5 w-5 animate-pulse" /> Cargando documento...
+          <FileSpreadsheet className="h-5 w-5 animate-pulse" /> {loadingMessage}
         </div>
       ) : (
         <div className="space-y-4">
