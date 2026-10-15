@@ -16,11 +16,16 @@ export async function POST(request: Request) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // Extract structured menu data from PDF
+    // Extract structured menu data from PDF (6 essential columns: Meal, Prep, TCAC, Name, Gross, Net)
     const parsedData = await parseMinutaPDF(buffer);
 
-    // Determine target day: detected from PDF header ("MENÚ Nº X") or from form input
-    const dia = parsedData.numero_dia || (numeroDia ? parseInt(numeroDia, 10) : 1);
+    // Determine target day: prioritize user selection from UI, then header detected from PDF ("MENÚ Nº X" / "MENÚ X"), fallback to 1
+    const formDia = numeroDia ? parseInt(numeroDia, 10) : null;
+    const dia = (formDia && !isNaN(formDia) && formDia > 0)
+      ? formDia
+      : (parsedData.numero_dia && !isNaN(parsedData.numero_dia) && parsedData.numero_dia > 0
+          ? parsedData.numero_dia
+          : 1);
 
     // Determine target age group
     let grupo = null;
@@ -48,7 +53,7 @@ export async function POST(request: Request) {
 
     // Load existing alimentos
     let alimentos = await prisma.alimentoTCAC.findMany();
-    let tcacToId = new Map(alimentos.map(a => [a.codigo_icbf, a.id]));
+    let tcacToId = new Map(alimentos.filter(a => a.codigo_icbf).map(a => [a.codigo_icbf!.toUpperCase(), a.id]));
 
     // Known fallback codes
     const fallbacks: Record<string, string> = {
@@ -80,6 +85,7 @@ export async function POST(request: Request) {
         }
       });
       tcacToId.set('L015', createdSal.id);
+      alimentos.push(createdSal);
     }
 
     if (!tcacToId.has('P046') && !tcacToId.has('P045')) {
@@ -104,6 +110,7 @@ export async function POST(request: Request) {
         }
       });
       tcacToId.set('P046', createdCorozo.id);
+      alimentos.push(createdCorozo);
     }
 
     // Map foods by id for rapid attribute lookup
@@ -116,20 +123,89 @@ export async function POST(request: Request) {
       const resolvedIngredientes = [];
 
       for (const ing of prep.ingredientes) {
-        let alimId = tcacToId.get(ing.codigo_tcac);
+        const codeUpper = (ing.codigo_tcac || '').toUpperCase().trim();
+        let alimId = codeUpper ? tcacToId.get(codeUpper) : undefined;
 
-        if (!alimId && fallbacks[ing.codigo_tcac]) {
-          alimId = tcacToId.get(fallbacks[ing.codigo_tcac]);
+        // Try known fallback code
+        if (!alimId && codeUpper && fallbacks[codeUpper]) {
+          alimId = tcacToId.get(fallbacks[codeUpper]);
         }
 
         // Fuzzy match by name if code still unmapped
         if (!alimId && ing.nombre) {
-          const matchedAlim = alimentos.find(a =>
-            a.nombre.toLowerCase().includes(ing.nombre.toLowerCase()) ||
-            ing.nombre.toLowerCase().includes(a.nombre.toLowerCase())
-          );
+          const cleanIngName = ing.nombre.toLowerCase().trim();
+          const matchedAlim = alimentos.find(a => {
+            const aName = a.nombre.toLowerCase().trim();
+            return aName.includes(cleanIngName) || cleanIngName.includes(aName);
+          });
           if (matchedAlim) {
             alimId = matchedAlim.id;
+          }
+        }
+
+        // Auto-create in AlimentoTCAC if still missing (Guarantees NO food is ever discarded)
+        if (!alimId) {
+          const targetCode = codeUpper || `AUT_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+          // Check if already in DB under this code
+          const existingAlim = await prisma.alimentoTCAC.findFirst({
+            where: { codigo_icbf: targetCode }
+          });
+
+          if (existingAlim) {
+            alimId = existingAlim.id;
+            tcacToId.set(targetCode, alimId);
+            alimMap.set(alimId, existingAlim);
+          } else {
+            const pct = (ing.peso_bruto > 0 && ing.peso_neto > 0)
+              ? Math.min(100, Math.max(10, Math.round((ing.peso_neto / ing.peso_bruto) * 100)))
+              : 100;
+
+            let grupoAlimento = 'Otros Alimentos';
+            const prefix = targetCode.charAt(0).toUpperCase();
+            if (prefix === 'A') grupoAlimento = 'Cereales y Productos Derivados';
+            else if (prefix === 'B') grupoAlimento = 'Verduras, Hortalizas y Leguminosas Verdes';
+            else if (prefix === 'C' || prefix === 'P') grupoAlimento = 'Frutas';
+            else if (prefix === 'D') grupoAlimento = 'Grasas y Aceites';
+            else if (prefix === 'F') grupoAlimento = 'Carnes, Aves, Pescados y Mariscos';
+            else if (prefix === 'G') grupoAlimento = 'Leche y Productos Lácteos';
+            else if (prefix === 'J') grupoAlimento = 'Huevos';
+            else if (prefix === 'K') grupoAlimento = 'Azúcares, Mieles y Dulces';
+            else if (prefix === 'L') grupoAlimento = 'Condimentos y Especias';
+            else if (prefix === 'R') grupoAlimento = 'Bienestarina y Alimentos Complementarios';
+            else if (prefix === 'T') grupoAlimento = 'Leguminosas Secas';
+
+            try {
+              const createdAlim = await prisma.alimentoTCAC.create({
+                data: {
+                  codigo_icbf: targetCode,
+                  nombre: ing.nombre || `Alimento ${targetCode}`,
+                  grupo_alimento: grupoAlimento,
+                  porcentaje_comestible: pct,
+                  energia_kcal: 100,
+                  proteina_g: 2.0,
+                  grasa_g: 1.0,
+                  carbohidratos_g: 15.0,
+                  hierro_mg: 0.5,
+                  calcio_mg: 10.0,
+                  zinc_mg: 0.2,
+                  sodio_mg: 50.0,
+                  vitamina_a_rae: 0,
+                  presentacion_comercial_gramos: 1000,
+                  tipo_empaque: 'kg / unidad',
+                  costo_unidad_compra: 3000
+                }
+              });
+              alimId = createdAlim.id;
+              tcacToId.set(targetCode, alimId);
+              alimentos.push(createdAlim);
+              alimMap.set(alimId, createdAlim);
+            } catch (createErr) {
+              console.warn(`Could not auto-create alimento ${targetCode}:`, createErr);
+              if (alimentos.length > 0) {
+                alimId = alimentos[0].id;
+              }
+            }
           }
         }
 
