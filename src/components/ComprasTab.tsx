@@ -46,6 +46,7 @@ import {
   generarPDFPlanillaEntregaOficialUDS,
   generarPDFPlanillasTodasLasSemanas,
   generarPDFListaCompras,
+  generarPDFSemanalCompletoConDias,
 } from '@/lib/pdfGenerator';
 import { calcularEdadICBF } from '@/lib/ageCalculator';
 import { DEFAULT_LOGO_BASE64 } from '@/lib/defaultLogoBase64';
@@ -745,7 +746,16 @@ export default function ComprasTab() {
     generarExcelCicloCompleto(todasLasSemanas, metadatosCompletos);
   };
 
-  // 3. Manejo de exportación a PDF de la Planilla Oficial de la Semana Actual
+  // 3. Manejo de exportación a PDF de la Semana Completa (5 Días Detallados + Planilla Oficial)
+  const handleDescargarPDFSemanalCompleto = () => {
+    generarPDFSemanalCompletoConDias(
+      metadatosCompletos,
+      diasCalculados,
+      consolidadoPlanilla
+    );
+  };
+
+  // 4. Manejo de exportación a PDF de la Planilla Oficial de 1 Hoja
   const handleDescargarPDFPlanilla = () => {
     generarPDFPlanillaEntregaOficialUDS(metadatosCompletos, consolidadoPlanilla);
   };
@@ -940,15 +950,23 @@ export default function ComprasTab() {
             Datos & Logo
           </button>
 
-          {/* Grupo PDF Oficial: Semana Actual y Ciclo Completo (5 Semanas) */}
+          {/* Grupo PDF Oficial: Menús Diarios + Planilla, Solo Planilla (1 Hoja), Todas las Semanas */}
           <div className="flex items-center rounded-xl bg-slate-800 p-0.5 shadow-xs">
             <button
+              onClick={handleDescargarPDFSemanalCompleto}
+              className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-emerald-300 text-xs font-bold rounded-lg transition-colors"
+              title={`Generar documento PDF multi-página oficial con los menús detallados de cada día (hojas 1 a 5) y la planilla de entrega al final (Semana ${semanaSeleccionadaId})`}
+            >
+              <FileText className="w-3.5 h-3.5 text-emerald-400" />
+              PDF Semana Completa (Menús Diarios + Planilla)
+            </button>
+            <button
               onClick={handleDescargarPDFPlanilla}
-              className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-white text-xs font-bold rounded-lg transition-colors"
-              title={`Generar e imprimir el PDF de la planilla oficial de entrega de la Semana ${semanaSeleccionadaId}`}
+              className="flex items-center gap-1.5 px-2.5 py-2 hover:bg-slate-700 text-white text-xs font-bold rounded-lg transition-colors border-l border-slate-700"
+              title={`Generar únicamente la planilla oficial consolidada de entrega en 1 sola hoja Carta (Semana ${semanaSeleccionadaId})`}
             >
               <Printer className="w-3.5 h-3.5 text-slate-300" />
-              PDF (Semana {semanaSeleccionadaId})
+              Solo Planilla PDF (1 Hoja)
             </button>
             <button
               onClick={handleDescargarPDFTodasLasSemanas}
@@ -960,23 +978,23 @@ export default function ComprasTab() {
             </button>
           </div>
 
-          {/* Grupo Excel Oficial: Semana Actual y Ciclo Completo (5 Semanas) */}
+          {/* Grupo Excel Oficial: Semana Detallada y Ciclo Completo (5 Semanas) */}
           <div className="flex items-center rounded-xl bg-emerald-700 p-0.5 shadow-xs">
             <button
               onClick={handleDescargarExcel}
               className="flex items-center gap-1.5 px-3 py-2 hover:bg-emerald-800 text-white text-xs font-bold rounded-lg transition-colors"
-              title={`Descargar libro Excel oficial (5 menús diarios + planilla) de la Semana ${semanaSeleccionadaId}`}
+              title={`Descargar libro Excel oficial con los 5 menús diarios detallados + hoja de entrega de la Semana ${semanaSeleccionadaId}`}
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
-              Excel (Semana {semanaSeleccionadaId})
+              Descargar Excel (Semana Detallada)
             </button>
             <button
               onClick={handleDescargarExcelCicloCompleto}
-              className="flex items-center gap-1 px-2.5 py-2 hover:bg-emerald-800 text-amber-200 text-xs font-bold rounded-lg transition-colors border-l border-emerald-600"
-              title="Descargar libro Excel completo con las 5 semanas (25 menús diarios y las 5 planillas oficiales de entrega)"
+              className="flex items-center gap-1.5 px-2.5 py-2 hover:bg-emerald-800 text-amber-200 text-xs font-bold rounded-lg transition-colors border-l border-emerald-600"
+              title="Descargar libro Excel completo con las 5 semanas (25 menús diarios detallados, 5 planillas oficiales de entrega y consolidado total)"
             >
               <Layers className="w-3.5 h-3.5 text-amber-300" />
-              Ciclo Completo (5 Sem Excel)
+              Ciclo Completo (5 Semanas Excel)
             </button>
           </div>
         </div>

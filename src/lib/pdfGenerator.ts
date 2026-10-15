@@ -314,6 +314,7 @@ export function generarPDFPlanillaEntrega(
  * Formato oficial con datos de EAS, NIT, Contrato, Municipio, HCB, logo oficial en esquina superior derecha y tabla de productos con firmas.
  */
 import { DEFAULT_LOGO_BASE64 } from './defaultLogoBase64';
+import type { DiaProyeccionExcel } from './comprasExcelGenerator';
 
 export interface MetaPlanillaEntregaPDF {
   eas: string;
@@ -327,6 +328,10 @@ export interface MetaPlanillaEntregaPDF {
   fechaInicio: string;
   fechaFin: string;
   logoBase64?: string;
+  menores3?: number;
+  mayores3?: number;
+  totalNinos?: number;
+  codigoUds?: string;
 }
 
 export interface ItemPlanillaEntregaPDF {
@@ -524,6 +529,228 @@ export function generarPDFPlanillasTodasLasSemanas(
   const firstMeta = semanas[0]?.meta;
   const safeName = (firstMeta?.nombreUds || 'UDS').replace(/[^a-zA-Z0-9_-]/g, '_');
   doc.save(`Planillas_Entrega_CicloCompleto_5Semanas_${safeName}.pdf`);
+}
+
+/**
+ * GENERADOR 5: PDF Semanal Completo con Menús Diarios Detallados + Planilla Oficial de Entrega
+ * - Páginas 1 a 5: Menú de cada día de la semana (1 hoja Carta por día)
+ *   Encabezado: EAS, NIT, UDS, Madre Comunitaria, Municipio
+ *   Título del día: Ej. "LUNES — MENÚ DEL CICLO #21"
+ *   Censo: "Censo: {menores3} niños < 3a | {mayores3} niños ≥ 3a | Total: {totalNinos} niños/as"
+ *   Si está anulado: Banner "DÍA ANULADO (FESTIVO / NO LABORAL)"
+ *   Si está activo: Tabla autoTable con las 9 columnas detalladas:
+ *     1. TIEMPO DE COMIDA
+ *     2. PREPARACIÓN
+ *     3. CÓD. TCAC
+ *     4. INGREDIENTE / ALIMENTO
+ *     5. P. BRUTO < 3a (g)
+ *     6. P. BRUTO ≥ 3a (g)
+ *     7. MENOR DE 3 (g)
+ *     8. MAYOR DE 3 (g)
+ *     9. TOTAL DÍA (g)
+ *   Fila de totales al pie de la tabla con la suma en gramos y kilos.
+ * - Página Final (Página 6): Planilla Oficial de Entrega de Alimentos con su logotipo en la esquina
+ *   superior derecha, encabezado centrado, texto legal con fechas, tabla consolidada sin duplicados y firmas oficiales.
+ */
+export function generarPDFSemanalCompletoConDias(
+  meta: MetaPlanillaEntregaPDF,
+  dias: DiaProyeccionExcel[],
+  consolidado: ItemPlanillaEntregaPDF[]
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  const logoToUse = meta.logoBase64 || DEFAULT_LOGO_BASE64;
+  const menores3 = meta.menores3 ?? 0;
+  const mayores3 = meta.mayores3 ?? 0;
+  const totalNinos = meta.totalNinos ?? (menores3 + mayores3);
+
+  // Páginas 1 a N: Menú detallado de cada día de la semana (1 día por hoja Carta)
+  dias.forEach((dia, idx) => {
+    if (idx > 0) {
+      doc.addPage();
+    }
+
+    // 1. Logo oficial en esquina superior derecha
+    if (logoToUse) {
+      try {
+        doc.addImage(logoToUse, 'JPEG', 180, 8, 22, 22);
+      } catch (e) {
+        console.warn('No se pudo incrustar el logo en la página diaria:', e);
+      }
+    }
+
+    // 2. Encabezado institucional centrado y acotado
+    const headerX = 98;
+    const maxHeaderWidth = 145;
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text(
+      (meta.eas || 'ASOCIACION DE FAMILIA DE HCB DE CAIMITO-SUCRE').toUpperCase(),
+      headerX,
+      11,
+      { align: 'center', maxWidth: maxHeaderWidth }
+    );
+
+    doc.setFontSize(7.2);
+    doc.setFont('helvetica', 'bold');
+    doc.text(
+      `NIT: ${meta.nit || '8230002828 - 6'}  |  CONTRATO: ${meta.contrato || '70005732024'}  |  MUNICIPIO: ${meta.municipio || 'CAIMITO-SUCRE'}`,
+      headerX,
+      15.2,
+      { align: 'center', maxWidth: maxHeaderWidth }
+    );
+    doc.setFont('helvetica', 'normal');
+    doc.text(
+      `HCB / UDS: ${meta.nombreUds || 'Travesuras Infantiles'}  |  Madre Comunitaria: ${meta.madreComunitaria || 'Ana Acevedo'}`,
+      headerX,
+      18.8,
+      { align: 'center', maxWidth: maxHeaderWidth }
+    );
+
+    // 3. Banner del Día y Censo de Beneficiarios
+    doc.setFillColor(4, 120, 87); // Verde institucional ICBF
+    doc.roundedRect(14.45, 22.5, 187, 8.5, 1, 1, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'bold');
+    const diaTitulo = `${dia.diaSemana.toUpperCase()} — MENÚ DEL CICLO #${dia.numeroDiaCiclo}`;
+    doc.text(diaTitulo, 108, 26.2, { align: 'center' });
+
+    doc.setFontSize(6.8);
+    doc.setFont('helvetica', 'normal');
+    const censoTexto = `Censo: ${menores3} niños < 3a  |  ${mayores3} niños ≥ 3a  |  Total: ${totalNinos} niños/as beneficiarios`;
+    doc.text(censoTexto, 108, 29.6, { align: 'center' });
+
+    // 4. Estado del Día: Activo (Tabla 9 columnas) vs Anulado (Banner de Anulación)
+    if (!dia.activo) {
+      doc.setFillColor(254, 226, 226); // Rose 100
+      doc.setDrawColor(239, 68, 68); // Rose 500
+      doc.roundedRect(14.45, 36, 187, 24, 2, 2, 'FD');
+
+      doc.setTextColor(185, 28, 28);
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text('DÍA ANULADO (FESTIVO / NO LABORAL)', 108, 47, { align: 'center' });
+
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.text(
+        dia.motivoAnulacion || 'No se programan raciones ni preparación de alimentos para este día.',
+        108,
+        53,
+        { align: 'center' }
+      );
+    } else {
+      const bodyRows = dia.items.map((item) => [
+        (item.tiempo || 'ALMUERZO').toUpperCase(),
+        item.preparacion || 'Preparación',
+        item.codigo_tcac || '-',
+        item.nombre,
+        `${item.gMenor} g`,
+        `${item.gMayor} g`,
+        `${Math.round(item.totalMenor * 10) / 10} g`,
+        `${Math.round(item.totalMayor * 10) / 10} g`,
+        `${Math.round(item.totalDia * 10) / 10} g`,
+      ]);
+
+      const sumMenor = Math.round(dia.items.reduce((acc, it) => acc + (it.totalMenor || 0), 0) * 10) / 10;
+      const sumMayor = Math.round(dia.items.reduce((acc, it) => acc + (it.totalMayor || 0), 0) * 10) / 10;
+      const sumDia = Math.round(dia.items.reduce((acc, it) => acc + (it.totalDia || 0), 0) * 10) / 10;
+
+      const footRows = [
+        [
+          '',
+          'TOTAL DÍA',
+          '',
+          `${dia.items.length} INGREDIENTES (${(sumDia / 1000).toFixed(2)} kg)`,
+          '',
+          '',
+          `${sumMenor.toLocaleString('es-CO')} g`,
+          `${sumMayor.toLocaleString('es-CO')} g`,
+          `${sumDia.toLocaleString('es-CO')} g`,
+        ],
+      ];
+
+      autoTable(doc, {
+        startY: 33,
+        pageBreak: 'avoid',
+        head: [
+          [
+            'TIEMPO DE COMIDA',
+            'PREPARACIÓN',
+            'CÓD. TCAC',
+            'INGREDIENTE / ALIMENTO',
+            'P. BRUTO < 3a (g)',
+            'P. BRUTO ≥ 3a (g)',
+            'MENOR DE 3 (g)',
+            'MAYOR DE 3 (g)',
+            'TOTAL DÍA (g)',
+          ],
+        ],
+        body: bodyRows,
+        foot: footRows,
+        theme: 'grid',
+        headStyles: {
+          fillColor: [169, 208, 142], // Verde pastel oficial #a9d08e (idéntico a la muestra ICBF)
+          textColor: [0, 0, 0],
+          fontStyle: 'bold',
+          fontSize: 6.8,
+          halign: 'center',
+          minCellHeight: 4.2,
+          cellPadding: 1.0,
+        },
+        footStyles: {
+          fillColor: [241, 245, 249],
+          textColor: [15, 23, 42],
+          fontStyle: 'bold',
+          fontSize: 6.8,
+          minCellHeight: 4.2,
+          cellPadding: 1.0,
+        },
+        styles: {
+          fontSize: 6.8,
+          cellPadding: 1.0,
+          minCellHeight: 3.8,
+          textColor: [30, 41, 59],
+        },
+        columnStyles: {
+          0: { cellWidth: 24, halign: 'center' },
+          1: { cellWidth: 26 },
+          2: { cellWidth: 14, halign: 'center' },
+          3: { cellWidth: 43 },
+          4: { cellWidth: 16, halign: 'right' },
+          5: { cellWidth: 16, halign: 'right' },
+          6: { cellWidth: 16, halign: 'right' },
+          7: { cellWidth: 16, halign: 'right' },
+          8: { cellWidth: 16, halign: 'right' },
+        },
+        margin: { left: 14.45, right: 14.45 },
+        tableWidth: 187,
+      });
+    }
+
+    // Pie de página de cada hoja diaria
+    doc.setFontSize(6.5);
+    doc.setFont('helvetica', 'italic');
+    doc.setTextColor(100, 116, 139);
+    doc.text(
+      `Semana del ${meta.fechaInicio || 'Inicio'} al ${meta.fechaFin || 'Fin'}  |  Minuta Patrón ICBF con factor de desecho normativo`,
+      14.45,
+      pageHeight - 6.5
+    );
+    doc.text(`Página ${idx + 1} de ${dias.length + 1}`, 201.45, pageHeight - 6.5, { align: 'right' });
+  });
+
+  // Página Final: Planilla Oficial de Entrega de Alimentos con Firmas
+  doc.addPage();
+  dibujarPaginaPlanillaEntrega(doc, meta, consolidado);
+
+  const safeName = (meta.nombreUds || 'UDS').replace(/[^a-zA-Z0-9_-]/g, '_');
+  doc.save(`Semana_Completa_Menus_y_Planilla_${safeName}_Menus_${meta.diasCicloTexto}.pdf`);
 }
 
 

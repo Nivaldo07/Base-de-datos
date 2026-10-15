@@ -14,6 +14,8 @@ export interface DiaProyeccionExcel {
     totalMayor: number;
     totalDia: number;
     tiempo?: string;
+    preparacion?: string;
+    codigo_tcac?: string;
   }>;
 }
 
@@ -51,72 +53,115 @@ export interface SemanaProyeccionExcel {
 }
 
 /**
- * Genera la estructura de filas para una hoja diaria de menú (idéntica a la plantilla ICBF)
+ * Genera la estructura de filas para una hoja diaria de menú con el detalle completo de alimentos
+ * Idéntica a la especificación ICBF:
+ * - Fila 1: [null, "MENÚ " + dia.numeroDiaCiclo + " (" + dia.diaSemana.toUpperCase() + ") - " + (meta.nombreUds || 'UDS')]
+ * - Fila 2: [null, "CENSO: " + meta.menores3 + " Niños < 3 años | " + meta.mayores3 + " Niños ≥ 3 años | Total: " + meta.totalNinos + " Beneficiarios"]
+ * - Fila 3: Espacio
+ * - Fila 4: Encabezados detallados:
+ *   [null, "TIEMPO DE COMIDA", "PREPARACIÓN", "CÓD. TCAC", "INGREDIENTE / ALIMENTO", "P. BRUTO < 3a (g)", "P. BRUTO ≥ 3a (g)", "MENOR DE 3 (g)", "MAYOR DE 3 (g)", "TOTAL DÍA (g)"]
+ * - Filas de datos con item.tiempo, item.preparacion, item.codigo_tcac, item.nombre, item.gMenor, item.gMayor, item.totalMenor, item.totalMayor, item.totalDia.
+ * - Fila de Total Día al final sumando los gramos.
  */
-function construirHojaDiariaMenu(dia: DiaProyeccionExcel): XLSX.WorkSheet {
+function construirHojaDiariaMenu(
+  dia: DiaProyeccionExcel,
+  meta?: MetadatosPlanillaExcel
+): XLSX.WorkSheet {
   const wsData: any[][] = [];
 
-  // Fila 1: Título del menú
-  wsData.push([null, `MENU ${dia.numeroDiaCiclo}`]);
+  const nombreUds = meta?.nombreUds || 'UDS';
+  const menores3 = meta?.menores3 ?? 0;
+  const mayores3 = meta?.mayores3 ?? 0;
+  const totalNinos = meta?.totalNinos ?? (menores3 + mayores3);
 
-  // Fila 2: Sub-encabezados de grupos y totales
+  // Fila 1: Título del menú detallado
+  wsData.push([null, `MENÚ ${dia.numeroDiaCiclo} (${dia.diaSemana.toUpperCase()}) - ${nombreUds}`]);
+
+  // Fila 2: Censo de beneficiarios
   wsData.push([
     null,
-    'NIÑOS MENORES DE 3 AÑOS',
+    `CENSO: ${menores3} Niños < 3 años | ${mayores3} Niños ≥ 3 años | Total: ${totalNinos} Beneficiarios`,
+  ]);
+
+  // Fila 3: Espacio
+  wsData.push([]);
+
+  // Fila 4: Encabezados detallados
+  wsData.push([
     null,
-    null,
-    'NIÑO MENOR DE 5 AÑOS',
-    null,
-    null,
-    'MENOR DE 3',
-    'MAYOR DE 3',
-    'TOTAL',
+    'TIEMPO DE COMIDA',
+    'PREPARACIÓN',
+    'CÓD. TCAC',
+    'INGREDIENTE / ALIMENTO',
+    'P. BRUTO < 3a (g)',
+    'P. BRUTO ≥ 3a (g)',
+    'MENOR DE 3 (g)',
+    'MAYOR DE 3 (g)',
+    'TOTAL DÍA (g)',
   ]);
 
   if (!dia.activo) {
     wsData.push([
       null,
-      `DÍA ANULADO: ${dia.motivoAnulacion || 'Festivo / No Laboral'}`,
+      'DÍA ANULADO',
+      dia.motivoAnulacion || 'Festivo / No Laboral',
+      '-',
+      'SIN SERVICIO PROGRAMADO',
       0,
-      null,
-      `DÍA ANULADO: ${dia.motivoAnulacion || 'Festivo / No Laboral'}`,
       0,
-      null,
       0,
       0,
       0,
     ]);
   } else {
-    // Filas de ingredientes (Col B a Col J)
+    // Filas de datos detalladas
     dia.items.forEach((item) => {
       wsData.push([
         null,
+        item.tiempo || 'ALMUERZO',
+        item.preparacion || 'Preparación',
+        item.codigo_tcac || '-',
         item.nombre,
         item.gMenor,
-        null,
-        item.nombre,
         item.gMayor,
-        null,
         item.totalMenor,
         item.totalMayor,
         item.totalDia,
       ]);
     });
+
+    // Fila de Total Día al final sumando los gramos
+    const sumMenor = Math.round(dia.items.reduce((acc, it) => acc + (it.totalMenor || 0), 0) * 10) / 10;
+    const sumMayor = Math.round(dia.items.reduce((acc, it) => acc + (it.totalMayor || 0), 0) * 10) / 10;
+    const sumDia = Math.round(dia.items.reduce((acc, it) => acc + (it.totalDia || 0), 0) * 10) / 10;
+
+    wsData.push([
+      null,
+      'TOTAL DÍA',
+      '',
+      '',
+      `${dia.items.length} INGREDIENTES (${(sumDia / 1000).toFixed(2)} kg)`,
+      '',
+      '',
+      sumMenor,
+      sumMayor,
+      sumDia,
+    ]);
   }
 
   const ws = XLSX.utils.aoa_to_sheet(wsData);
 
   ws['!cols'] = [
-    { wch: 3 },  // Col A
-    { wch: 42 }, // Col B: Nombre menor 3
-    { wch: 12 }, // Col C: Gramos menor 3
-    { wch: 3 },  // Col D: Separador
-    { wch: 42 }, // Col E: Nombre mayor 3
-    { wch: 12 }, // Col F: Gramos mayor 3
-    { wch: 3 },  // Col G: Separador
-    { wch: 14 }, // Col H: Total menor 3
-    { wch: 14 }, // Col I: Total mayor 3
-    { wch: 14 }, // Col J: Total día
+    { wch: 3 },  // Col A: margen
+    { wch: 20 }, // Col B: Tiempo de comida
+    { wch: 24 }, // Col C: Preparación
+    { wch: 12 }, // Col D: Cód. TCAC
+    { wch: 38 }, // Col E: Ingrediente / Alimento
+    { wch: 16 }, // Col F: P. Bruto < 3a (g)
+    { wch: 16 }, // Col G: P. Bruto ≥ 3a (g)
+    { wch: 14 }, // Col H: Menor de 3 (g)
+    { wch: 14 }, // Col I: Mayor de 3 (g)
+    { wch: 16 }, // Col J: Total Día (g)
   ];
 
   ws['!pageSetup'] = { paperSize: 1, orientation: 'landscape', fitToWidth: 1, fitToHeight: 1 };
@@ -329,7 +374,7 @@ export async function generarExcelProyeccionYPlanilla(
   // 1. GENERAR PESTAÑAS DIARIAS (MENU 21 a MENU 25 o según corresponda)
   dias.forEach((dia) => {
     const sheetName = `MENU ${dia.numeroDiaCiclo}`.slice(0, 31);
-    const ws = construirHojaDiariaMenu(dia);
+    const ws = construirHojaDiariaMenu(dia, meta);
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
   });
 
@@ -369,7 +414,7 @@ export async function generarExcelCicloCompleto(
     // A. Agregar las hojas diarias de la semana (ej. MENU 1..5, MENU 6..10, etc.)
     sem.dias.forEach((dia) => {
       const sheetName = `MENU ${dia.numeroDiaCiclo}`.slice(0, 31);
-      const ws = construirHojaDiariaMenu(dia);
+      const ws = construirHojaDiariaMenu(dia, sem.meta);
       XLSX.utils.book_append_sheet(wb, ws, sheetName);
     });
 
