@@ -106,6 +106,9 @@ export async function POST(request: Request) {
       tcacToId.set('P046', createdCorozo.id);
     }
 
+    // Map foods by id for rapid attribute lookup
+    const alimMap = new Map(alimentos.map(a => [a.id, a]));
+
     // Prepare preparaciones with mapped database IDs
     const validPreps = [];
 
@@ -131,13 +134,14 @@ export async function POST(request: Request) {
         }
 
         if (alimId && !isNaN(ing.peso_bruto) && !isNaN(ing.peso_neto)) {
+          const alimento = alimMap.get(alimId);
           resolvedIngredientes.push({
             alimento_id: alimId,
             peso_bruto: ing.peso_bruto,
             peso_neto: ing.peso_neto,
-            sodio_mg_excel: ing.sodio_mg_excel,
-            costo_unidad_compra: ing.costo_unidad_compra,
-            costo_unitario_excel: ing.costo_unitario_excel
+            costo_unidad_compra: alimento?.costo_unidad_compra || 0,
+            sodio_mg_excel: null,
+            costo_unitario_excel: null
           });
         }
       }

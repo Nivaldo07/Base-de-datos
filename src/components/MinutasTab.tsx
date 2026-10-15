@@ -422,7 +422,7 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
                   </thead>
                   <tbody>
                     {flatRows.length === 0 ? (
-                      <tr><td colSpan={16} className="p-4 text-center text-slate-400">Sin datos</td></tr>
+                      <tr><td colSpan={19} className="p-4 text-center text-slate-400">Sin datos</td></tr>
                     ) : (
                       flatRows.map((row, idx) => {
                         const alim = tcacDatabase.find(a => a.id === row.ing.alimento_id);

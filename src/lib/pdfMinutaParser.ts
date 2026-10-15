@@ -142,7 +142,7 @@ function getSemanticAffinity(prepName: string, ing: { tcac: string; nombre: stri
 
 function alignIngredientsToPrepsSemantic(
   preps: { text: string; y: number; meal: string }[],
-  ingrs: { tcac: string; nombre: string; peso_bruto: number; peso_neto: number; sodio_mg_excel: number | null; costo_unidad_compra: number | null; costo_unitario_excel: number | null; y: number }[]
+  ingrs: { tcac: string; nombre: string; peso_bruto: number; peso_neto: number; y: number }[]
 ): ParsedPreparacion[] {
   const M = preps.length;
   const N = ingrs.length;
@@ -187,15 +187,15 @@ function alignIngredientsToPrepsSemantic(
       nombre: ing.nombre,
       peso_bruto: ing.peso_bruto,
       peso_neto: ing.peso_neto,
-      sodio_mg_excel: ing.sodio_mg_excel,
-      costo_unidad_compra: ing.costo_unidad_compra,
-      costo_unitario_excel: ing.costo_unitario_excel
+      sodio_mg_excel: null,
+      costo_unidad_compra: null,
+      costo_unitario_excel: null
     }))
   }));
 }
 
 /**
- * Native deterministic extractor for ICBF PDF minutas using layout analysis and dynamic programming.
+ * Native deterministic extractor for ICBF PDF minutas focusing strictly on the 6 essential fields.
  */
 export async function parseMinutaPDFNative(pdfBuffer: Buffer): Promise<ParsedMinutaResult> {
   return new Promise((resolve, reject) => {
@@ -237,13 +237,16 @@ export async function parseMinutaPDFNative(pdfBuffer: Buffer): Promise<ParsedMin
         );
         const tableEnd = tableEndItem ? tableEndItem.y - 0.2 : 27.0;
 
-        // Reconstruct preparation names in column 2 (x in [4.2, 9.8])
+        const isTcacCode = (txt: string) => /^[A-Z]\d{3}$/i.test(txt) || /^(1015|1004|8004)$/.test(txt);
+
+        // Reconstruct preparation names in column 2 (x in [4.0, 9.5])
         const rawPrepTexts = texts.filter((t: any) =>
           t.y >= 11.0 && t.y < tableEnd &&
-          t.x >= 4.2 && t.x < 9.8 &&
+          t.x >= 4.0 && t.x < 9.5 &&
           !t.text.toUpperCase().includes('NOMBRE DE LA PREP') &&
           !t.text.toUpperCase().includes('INGREDIENTES') &&
-          !t.text.toUpperCase().includes('O TCAC')
+          !t.text.toUpperCase().includes('O TCAC') &&
+          !isTcacCode(t.text)
         ).sort((a: any, b: any) => a.y - b.y);
 
         const prepLabels: { text: string; y: number }[] = [];
@@ -282,8 +285,7 @@ export async function parseMinutaPDFNative(pdfBuffer: Buffer): Promise<ParsedMin
           }
         }
 
-        // All TCAC ingredients
-        const isTcacCode = (txt: string) => /^[A-Z]\d{3}$/i.test(txt) || /^(1015|1004|8004)$/.test(txt);
+        // All TCAC ingredients in column 3
         const tcacItems = texts.filter((t: any) =>
           t.y >= 11.0 && t.y < tableEnd &&
           t.x >= 9.5 && t.x <= 10.8 &&
@@ -296,24 +298,22 @@ export async function parseMinutaPDFNative(pdfBuffer: Buffer): Promise<ParsedMin
           if (code === '1004') code = 'J004';
           if (code === '8004') code = 'R004';
 
-          const rowTexts = texts.filter((rowT: any) => Math.abs(rowT.y - t.y) <= 0.25);
+          const rowTexts = texts.filter((rowT: any) => Math.abs(rowT.y - t.y) <= 0.28).sort((a: any, b: any) => a.x - b.x);
           const nameItems = rowTexts.filter((it: any) => it.x >= 10.8 && it.x < 16.5);
           const ingName = nameItems.map((it: any) => it.text).join(' ');
 
-          const pBruto = rowTexts.find((it: any) => it.x >= 16.5 && it.x < 18.5);
-          const pNeto = rowTexts.find((it: any) => it.x >= 18.5 && it.x < 20.2);
-          const pSodio = rowTexts.find((it: any) => it.x >= 39.0 && it.x < 41.5);
-          const pCompra = rowTexts.find((it: any) => it.x >= 43.5 && it.x < 45.8);
-          const pUnitario = rowTexts.find((it: any) => it.x >= 45.8 && it.x < 49.0);
+          // Extract ONLY the two immediate numbers right after the name (x in [16.5, 20.5]):
+          // 1st number: Peso Bruto, 2nd number: Peso Neto.
+          // Everything to the right of Peso Neto is discarded.
+          const afterNameNumbers = rowTexts.filter((it: any) => it.x >= 16.5 && it.x < 20.5 && parseNumber(it.text) !== null);
+          const pBruto = afterNameNumbers[0] ? parseNumber(afterNameNumbers[0].text) : 0;
+          const pNeto = afterNameNumbers[1] ? parseNumber(afterNameNumbers[1].text) : 0;
 
           return {
             tcac: code,
             nombre: ingName,
-            peso_bruto: parseNumber(pBruto?.text) || 0,
-            peso_neto: parseNumber(pNeto?.text) || 0,
-            sodio_mg_excel: parseNumber(pSodio?.text),
-            costo_unidad_compra: parseNumber(pCompra?.text),
-            costo_unitario_excel: parseNumber(pUnitario?.text),
+            peso_bruto: pBruto || 0,
+            peso_neto: pNeto || 0,
             y: t.y
           };
         });
@@ -359,21 +359,18 @@ export async function parseMinutaPDFGemini(pdfBuffer: Buffer): Promise<ParsedMin
     const base64Data = pdfBuffer.toString('base64');
 
     const prompt = `Analiza esta minuta institucional del ICBF ("Formato Ciclo de Menús - Análisis de Contenido Nutricional F4.G36.PP").
-Extrae detalladamente:
+Extrae EXCLUSIVAMENTE las 6 casillas esenciales del menú, descartando toda la información de nutrientes y costos:
 - numero_dia: número de menú (ejemplo: 1 si dice "MENÚ Nº 1").
 - grupo_etario: texto del grupo de edad (ejemplo: "1 año 11 meses a 2 años 11").
 - preparaciones: lista de preparaciones agrupadas por tiempo de comida ("REFRIGERIO MAÑANA", "ALMUERZO", "REFRIGERIO TARDE").
 Para cada preparación:
   - nombre: nombre exacto de la preparación en mayúsculas (ej. "PAN REDONDO CON MANTEQUILLA", "ARROZ BLANCO").
   - tiempo_comida: "REFRIGERIO MAÑANA", "ALMUERZO" o "REFRIGERIO TARDE".
-  - ingredientes: lista de ingredientes con:
-    * codigo_tcac: código ICBF de 4 caracteres (ej. "A060", "D015", "J004", "R004", "L015").
+  - ingredientes: lista de ingredientes con las casillas esenciales:
+    * codigo_tcac: código ICBF / TCAC del alimento (ej. "A060", "D015", "J004", "R004", "L015").
     * nombre: nombre del ingrediente.
     * peso_bruto: número en gramos/cc.
     * peso_neto: número en gramos/cc.
-    * sodio_mg_excel: aporte de sodio en mg (ej. 108.2, 193.905).
-    * costo_unidad_compra: costo unidad de compra en pesos.
-    * costo_unitario_excel: costo unitario en pesos.
 
 Responde ÚNICAMENTE con un objeto JSON válido con este formato:
 {
@@ -390,7 +387,7 @@ Responde ÚNICAMENTE con un objeto JSON válido con este formato:
           parts: [
             {
               inlineData: {
-                data: base64Data,
+				data: base64Data,
                 mimeType: 'application/pdf'
               }
             },
@@ -420,9 +417,9 @@ Responde ÚNICAMENTE con un objeto JSON válido con este formato:
           nombre: String(i.nombre || '').trim(),
           peso_bruto: Number(i.peso_bruto) || 0,
           peso_neto: Number(i.peso_neto) || 0,
-          sodio_mg_excel: i.sodio_mg_excel != null ? Number(i.sodio_mg_excel) : null,
-          costo_unidad_compra: i.costo_unidad_compra != null ? Number(i.costo_unidad_compra) : null,
-          costo_unitario_excel: i.costo_unitario_excel != null ? Number(i.costo_unitario_excel) : null
+          sodio_mg_excel: null,
+          costo_unidad_compra: null,
+          costo_unitario_excel: null
         }))
       })),
       parser_used: 'gemini_multimodal'

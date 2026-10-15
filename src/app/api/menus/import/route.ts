@@ -17,6 +17,7 @@ export async function POST(request: Request) {
     // Load all alimentos to match TCAC codes
     const alimentos = await prisma.alimentoTCAC.findMany();
     const tcacToId = new Map(alimentos.map(a => [a.codigo_icbf, a.id]));
+    const alimMap = new Map(alimentos.map(a => [a.id, a]));
 
     // Hardcode some fallbacks exactly like our seed script
     const fallbacks: any = {
@@ -104,9 +105,9 @@ export async function POST(request: Request) {
           colIdx.tcac = tcacIdx !== -1 ? tcacIdx : base + 2;
           colIdx.bruto = bIdx !== -1 ? bIdx : base + 4;
           colIdx.neto = nIdx !== -1 ? nIdx : base + 5;
-          colIdx.sodio = sodIdx !== -1 ? sodIdx : base + 14;
-          colIdx.costo = cIdx !== -1 ? cIdx : base + 16;
-          colIdx.costo_unitario = cuIdx !== -1 ? cuIdx : base + 17;
+          colIdx.sodio = sodIdx;
+          colIdx.costo = cIdx;
+          colIdx.costo_unitario = cuIdx;
           headerFound = true;
 
           // Si nextRow fue una fila de sub-encabezados (unidades sin código TCAC), saltarla:
@@ -124,7 +125,7 @@ export async function POST(request: Request) {
         const possibleTcac = row.findIndex(c => typeof c === 'string' && c.match(/^[A-Z0-9]{4}$/));
         if (possibleTcac !== -1 && possibleTcac >= 2) {
           const base = possibleTcac - 2;
-          colIdx = { tiempo: base, prep: base + 1, tcac: possibleTcac, bruto: base + 4, neto: base + 5, costo: base + 16, sodio: base + 14, costo_unitario: base + 17 };
+          colIdx = { tiempo: base, prep: base + 1, tcac: possibleTcac, bruto: base + 4, neto: base + 5, costo: -1, sodio: -1, costo_unitario: -1 };
           headerFound = true;
         } else {
           continue;
@@ -134,11 +135,11 @@ export async function POST(request: Request) {
       const colTiempo = cleanText(row[colIdx.tiempo]); 
       const colPrep = cleanText(row[colIdx.prep]); 
       let colTCAC = cleanText(row[colIdx.tcac]); 
-      const pesoBruto = parseNumeric(row[colIdx.bruto]);
-      const pesoNeto = parseNumeric(row[colIdx.neto]);
-      const costoUnidadCompra = parseNumeric(row[colIdx.costo]);
-      const sodioExcel = parseNumeric(row[colIdx.sodio]);
-      const costoUnitarioExcel = parseNumeric(row[colIdx.costo_unitario]);
+      const pesoBruto = colIdx.bruto !== -1 ? parseNumeric(row[colIdx.bruto]) : NaN;
+      const pesoNeto = colIdx.neto !== -1 ? parseNumeric(row[colIdx.neto]) : NaN;
+      const costoUnidadCompra = colIdx.costo !== -1 ? parseNumeric(row[colIdx.costo]) : NaN;
+      const sodioExcel = colIdx.sodio !== -1 ? parseNumeric(row[colIdx.sodio]) : NaN;
+      const costoUnitarioExcel = colIdx.costo_unitario !== -1 ? parseNumeric(row[colIdx.costo_unitario]) : NaN;
 
       // Detect Time
       if (colTiempo && !colTiempo.includes('TIEMPO DE COMIDA') && !colTiempo.includes('APORTE TOTAL') && !colTiempo.includes('ANALISIS') && !colTiempo.includes('MENU')) {
@@ -163,24 +164,41 @@ export async function POST(request: Request) {
         if (colTCAC === '1004') colTCAC = 'J004';
         if (colTCAC === '8004') colTCAC = 'R004';
 
-        // basic TCAC code detection A060, J004...
-        if (colTCAC.match(/^[A-Z0-9]{4}$/)) {
-          let alimId = tcacToId.get(colTCAC);
-          
-          if (!alimId && fallbacks[colTCAC]) {
-             alimId = tcacToId.get(fallbacks[colTCAC]);
-          }
+        let alimId = tcacToId.get(colTCAC);
+        
+        if (!alimId && fallbacks[colTCAC]) {
+           alimId = tcacToId.get(fallbacks[colTCAC]);
+        }
 
-          if (alimId && !isNaN(pesoBruto) && !isNaN(pesoNeto)) {
-            activePrep.ingredientes.push({
-              alimento_id: alimId,
-              peso_bruto: pesoBruto,
-              peso_neto: pesoNeto,
-              costo_unidad_compra: isNaN(costoUnidadCompra) ? null : costoUnidadCompra,
-              sodio_mg_excel: isNaN(sodioExcel) ? null : sodioExcel,
-              costo_unitario_excel: isNaN(costoUnitarioExcel) ? null : costoUnitarioExcel
-            });
+        // Fuzzy match by name if code still unmapped
+        if (!alimId) {
+          const rawName = row[colIdx.tcac + 1] || row[3];
+          const ingNombre = cleanText(rawName);
+          if (ingNombre) {
+            const matchedAlim = alimentos.find(a =>
+              cleanText(a.nombre).includes(ingNombre) ||
+              ingNombre.includes(cleanText(a.nombre))
+            );
+            if (matchedAlim) {
+              alimId = matchedAlim.id;
+            }
           }
+        }
+
+        if (alimId && !isNaN(pesoBruto) && !isNaN(pesoNeto)) {
+          const alimObj = alimMap.get(alimId);
+          const finalCostoCompra = !isNaN(costoUnidadCompra) && costoUnidadCompra > 0
+            ? costoUnidadCompra
+            : (alimObj?.costo_unidad_compra || 0);
+
+          activePrep.ingredientes.push({
+            alimento_id: alimId,
+            peso_bruto: pesoBruto,
+            peso_neto: pesoNeto,
+            costo_unidad_compra: finalCostoCompra,
+            sodio_mg_excel: isNaN(sodioExcel) ? null : sodioExcel,
+            costo_unitario_excel: isNaN(costoUnitarioExcel) ? null : costoUnitarioExcel
+          });
         }
       }
     }
