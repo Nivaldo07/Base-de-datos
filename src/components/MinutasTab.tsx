@@ -427,12 +427,21 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
                       flatRows.map((row, idx) => {
                         const alim = tcacDatabase.find(a => a.id === row.ing.alimento_id);
                         const isFirst = row.iIndex === 0;
+                        const isLastInPrep = row.iIndex === (row.prep.ingredientes?.length || 1) - 1;
 
                         return (
-                          <tr key={idx} className="border-b border-slate-200 hover:bg-yellow-50/60 transition-colors">
-                            {/* 1. T. COMIDA */}
-                            <td className="px-2 py-1.5 border-r border-slate-200 bg-white align-middle">
-                              {isFirst ? (
+                          <tr
+                            key={idx}
+                            className={`hover:bg-yellow-50/60 transition-colors ${
+                              isLastInPrep ? 'border-b-2 border-slate-300' : 'border-b border-slate-200'
+                            }`}
+                          >
+                            {/* 1. T. COMIDA (Combinado / rowSpan) */}
+                            {isFirst && (
+                              <td
+                                rowSpan={row.prep.ingredientes?.length || 1}
+                                className="px-2 py-1.5 border-r border-slate-200 bg-white align-middle text-center"
+                              >
                                 <select 
                                   value={row.prep.tiempo_comida} 
                                   onChange={e => updatePrepField(row.pIndex, 'tiempo_comida', e.target.value)} 
@@ -442,14 +451,15 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
                                   <option value="ALMUERZO">ALMUERZO</option>
                                   <option value="REFRIGERIO TARDE">REF. TARDE</option>
                                 </select>
-                              ) : (
-                                <span className="text-[10px] text-slate-400 block text-center italic">—</span>
-                              )}
-                            </td>
+                              </td>
+                            )}
 
-                            {/* 2. PREPARACIÓN */}
-                            <td className="px-2 py-1.5 border-r border-slate-200 bg-white align-middle">
-                              {isFirst ? (
+                            {/* 2. PREPARACIÓN (Combinado / rowSpan: una sola casilla vertical) */}
+                            {isFirst && (
+                              <td
+                                rowSpan={row.prep.ingredientes?.length || 1}
+                                className="px-2 py-1.5 border-r border-slate-200 bg-white align-middle"
+                              >
                                 <div className="flex items-center justify-between gap-1">
                                   <input 
                                     type="text" 
@@ -462,15 +472,13 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
                                     type="button" 
                                     onClick={() => removePreparacion(row.pIndex)} 
                                     title="Eliminar preparación entera" 
-                                    className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors"
+                                    className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors shrink-0"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>
                                 </div>
-                              ) : (
-                                <span className="text-[10px] text-slate-400 block text-center italic">—</span>
-                              )}
-                            </td>
+                              </td>
+                            )}
 
                             {/* 3. CÓD. TCAC */}
                             <td className="px-2 py-1.5 border-r border-slate-200 font-mono text-slate-600 text-center align-middle">

@@ -904,6 +904,43 @@ export default function ComprasTab() {
     );
   }, [diaSeleccionadoObj, searchTerm]);
 
+  // Cálculo de rowSpan para agrupar Tiempo de Comida y Preparación sin repetir nombres
+  const rowSpans = useMemo(() => {
+    const n = productosFiltradosDia.length;
+    const tiempoSpans = new Array(n).fill(0);
+    const prepSpans = new Array(n).fill(0);
+
+    let i = 0;
+    while (i < n) {
+      let tLen = 1;
+      while (
+        i + tLen < n &&
+        productosFiltradosDia[i + tLen].tiempo === productosFiltradosDia[i].tiempo
+      ) {
+        tLen++;
+      }
+      tiempoSpans[i] = tLen;
+      i += tLen;
+    }
+
+    let j = 0;
+    while (j < n) {
+      let pLen = 1;
+      while (
+        j + pLen < n &&
+        productosFiltradosDia[j + pLen].tiempo === productosFiltradosDia[j].tiempo &&
+        productosFiltradosDia[j + pLen].preparacion.trim().toUpperCase() ===
+          productosFiltradosDia[j].preparacion.trim().toUpperCase()
+      ) {
+        pLen++;
+      }
+      prepSpans[j] = pLen;
+      j += pLen;
+    }
+
+    return { tiempoSpans, prepSpans };
+  }, [productosFiltradosDia]);
+
   // Lista de preparaciones sugeridas para el día actual
   const preparacionesSugeridas = useMemo(() => {
     if (!diaSeleccionadoObj) return [];
@@ -1676,7 +1713,7 @@ export default function ComprasTab() {
                     <th className="p-3 text-center w-12">Acciones</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody>
                   {productosFiltradosDia.length === 0 ? (
                     <tr>
                       <td colSpan={10} className="p-8 text-center text-slate-400 text-xs">
@@ -1684,102 +1721,127 @@ export default function ComprasTab() {
                       </td>
                     </tr>
                   ) : (
-                    productosFiltradosDia.map((it) => (
-                      <tr key={it.id} className="hover:bg-slate-50/80 transition-colors">
-                        {/* 1. Tiempo de comida */}
-                        <td className="p-2.5">
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
-                            {it.tiempo}
-                          </span>
-                        </td>
+                    productosFiltradosDia.map((it, idx) => {
+                      const tSpan = rowSpans.tiempoSpans[idx];
+                      const pSpan = rowSpans.prepSpans[idx];
+                      const isLastInPrep =
+                        idx === productosFiltradosDia.length - 1 ||
+                        rowSpans.prepSpans[idx + 1] > 0;
 
-                        {/* 2. Preparación */}
-                        <td className="p-2.5 font-semibold text-slate-800">
-                          {it.preparacion}
-                        </td>
+                      return (
+                        <tr
+                          key={it.id}
+                          className={`hover:bg-slate-50/80 transition-colors ${
+                            isLastInPrep ? 'border-b-2 border-slate-300' : 'border-b border-slate-100'
+                          }`}
+                        >
+                          {/* 1. Tiempo de comida (Combinado / rowSpan) */}
+                          {tSpan > 0 && (
+                            <td
+                              rowSpan={tSpan}
+                              className="p-3 align-middle text-center bg-slate-50/80 border-r border-slate-200"
+                            >
+                              <span className="px-2.5 py-1 rounded-md text-[10px] font-black bg-white text-slate-800 border border-slate-300 shadow-2xs whitespace-nowrap inline-block">
+                                {it.tiempo}
+                              </span>
+                            </td>
+                          )}
 
-                        {/* 3. Código TCAC */}
-                        <td className="p-2.5 text-center font-mono text-[11px] text-slate-500 font-bold">
-                          {it.codigo_tcac || '—'}
-                        </td>
+                          {/* 2. Preparación (Combinado / rowSpan: el nombre solo sale UNA VEZ) */}
+                          {pSpan > 0 && (
+                            <td
+                              rowSpan={pSpan}
+                              className="p-3 align-middle font-bold text-slate-900 border-r border-slate-200 bg-white"
+                            >
+                              <div className="text-xs uppercase font-extrabold text-slate-800 leading-snug">
+                                {it.preparacion}
+                              </div>
+                            </td>
+                          )}
 
-                        {/* 4. Nombre del ingrediente */}
-                        <td className="p-2.5 font-bold text-slate-900">
-                          {it.nombre}
-                        </td>
+                          {/* 3. Código TCAC */}
+                          <td className="p-2.5 text-center font-mono text-[11px] text-slate-500 font-bold border-r border-slate-100">
+                            {it.codigo_tcac || '—'}
+                          </td>
 
-                        {/* 5. Peso Bruto < 3a (Editable en línea) */}
-                        <td className="p-2.5 text-right">
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.5"
-                            value={it.gMenor}
-                            onChange={(e) =>
-                              handleUpdateGramaje(
-                                diaSeleccionadoObj.numeroDiaCiclo,
-                                it.id,
-                                'gMenor',
-                                parseFloat(e.target.value) || 0
-                              )
-                            }
-                            className="w-16 px-1.5 py-1 text-right font-mono font-bold bg-white border border-sky-300 rounded text-xs focus:ring-2 focus:ring-sky-500 shadow-2xs"
-                            title="Editar gramaje por ración para menores de 3 años"
-                          />
-                        </td>
+                          {/* 4. Nombre del ingrediente */}
+                          <td className="p-2.5 font-bold text-slate-900">
+                            {it.nombre}
+                          </td>
 
-                        {/* 6. Peso Bruto >= 3a (Editable en línea) */}
-                        <td className="p-2.5 text-right">
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.5"
-                            value={it.gMayor}
-                            onChange={(e) =>
-                              handleUpdateGramaje(
-                                diaSeleccionadoObj.numeroDiaCiclo,
-                                it.id,
-                                'gMayor',
-                                parseFloat(e.target.value) || 0
-                              )
-                            }
-                            className="w-16 px-1.5 py-1 text-right font-mono font-bold bg-white border border-purple-300 rounded text-xs focus:ring-2 focus:ring-purple-500 shadow-2xs"
-                            title="Editar gramaje por ración para mayores de 3 años"
-                          />
-                        </td>
+                          {/* 5. Peso Bruto < 3a (Editable en línea) */}
+                          <td className="p-2.5 text-right">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              value={it.gMenor}
+                              onChange={(e) =>
+                                handleUpdateGramaje(
+                                  diaSeleccionadoObj.numeroDiaCiclo,
+                                  it.id,
+                                  'gMenor',
+                                  parseFloat(e.target.value) || 0
+                                )
+                              }
+                              className="w-16 px-1.5 py-1 text-right font-mono font-bold bg-white border border-sky-300 rounded text-xs focus:ring-2 focus:ring-sky-500 shadow-2xs"
+                              title="Editar gramaje por ración para menores de 3 años"
+                            />
+                          </td>
 
-                        {/* 7. Menor de 3 (g) Calculado reactivo */}
-                        <td className="p-2.5 text-right font-mono font-bold text-sky-900 bg-sky-50/40">
-                          {it.totalMenor.toLocaleString('es-CO')}
-                        </td>
+                          {/* 6. Peso Bruto >= 3a (Editable en línea) */}
+                          <td className="p-2.5 text-right">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              value={it.gMayor}
+                              onChange={(e) =>
+                                handleUpdateGramaje(
+                                  diaSeleccionadoObj.numeroDiaCiclo,
+                                  it.id,
+                                  'gMayor',
+                                  parseFloat(e.target.value) || 0
+                                )
+                              }
+                              className="w-16 px-1.5 py-1 text-right font-mono font-bold bg-white border border-purple-300 rounded text-xs focus:ring-2 focus:ring-purple-500 shadow-2xs"
+                              title="Editar gramaje por ración para mayores de 3 años"
+                            />
+                          </td>
 
-                        {/* 8. Mayor de 3 (g) Calculado reactivo */}
-                        <td className="p-2.5 text-right font-mono font-bold text-purple-900 bg-purple-50/40">
-                          {it.totalMayor.toLocaleString('es-CO')}
-                        </td>
+                          {/* 7. Menor de 3 (g) Calculado reactivo */}
+                          <td className="p-2.5 text-right font-mono font-bold text-sky-900 bg-sky-50/40">
+                            {it.totalMenor.toLocaleString('es-CO')}
+                          </td>
 
-                        {/* 9. Total Día (g) Calculado reactivo */}
-                        <td className="p-2.5 text-right font-mono font-extrabold text-emerald-950 bg-emerald-50/40">
-                          {it.totalDia.toLocaleString('es-CO')}
-                        </td>
+                          {/* 8. Mayor de 3 (g) Calculado reactivo */}
+                          <td className="p-2.5 text-right font-mono font-bold text-purple-900 bg-purple-50/40">
+                            {it.totalMayor.toLocaleString('es-CO')}
+                          </td>
 
-                        {/* 10. Acciones: Eliminar fila con confirmación */}
-                        <td className="p-2.5 text-center">
-                          <button
-                            onClick={() =>
-                              setItemAEliminar({
-                                numDia: diaSeleccionadoObj.numeroDiaCiclo,
-                                item: it,
-                              })
-                            }
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors"
-                            title={`Eliminar ${it.nombre} de este día`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                          {/* 9. Total Día (g) Calculado reactivo */}
+                          <td className="p-2.5 text-right font-mono font-extrabold text-emerald-950 bg-emerald-50/40">
+                            {it.totalDia.toLocaleString('es-CO')}
+                          </td>
+
+                          {/* 10. Acciones: Eliminar fila con confirmación */}
+                          <td className="p-2.5 text-center">
+                            <button
+                              onClick={() =>
+                                setItemAEliminar({
+                                  numDia: diaSeleccionadoObj.numeroDiaCiclo,
+                                  item: it,
+                                })
+                              }
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors"
+                              title={`Eliminar ${it.nombre} de este día`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
                 <tfoot className="bg-slate-100 font-black text-xs text-slate-900 border-t-2 border-slate-300">
