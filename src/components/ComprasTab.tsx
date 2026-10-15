@@ -185,12 +185,21 @@ function extraerItemsDeMenu(
     }
   }
 
-  // Si uno de los grupos no tenía menú explícito, rellenar proporcionalmente
-  for (const it of mapaItems.values()) {
-    if (it.gMenor === 0 && it.gMayor > 0) {
-      it.gMenor = Math.round(it.gMayor * 0.8 * 10) / 10;
-    } else if (it.gMayor === 0 && it.gMenor > 0) {
-      it.gMayor = Math.round(it.gMenor * 1.25 * 10) / 10;
+  // Si uno de los grupos no tenía menú explícito en la base de datos, rellenar proporcionalmente como contingencia
+  const tieneMenuMenores = !!(menuMenores && Array.isArray(menuMenores.preparaciones) && menuMenores.preparaciones.length > 0);
+  const tieneMenuMayores = !!(menuMayores && Array.isArray(menuMayores.preparaciones) && menuMayores.preparaciones.length > 0);
+
+  if (!tieneMenuMenores && tieneMenuMayores) {
+    for (const it of mapaItems.values()) {
+      if (it.gMenor === 0 && it.gMayor > 0) {
+        it.gMenor = Math.round(it.gMayor * 0.8 * 10) / 10;
+      }
+    }
+  } else if (!tieneMenuMayores && tieneMenuMenores) {
+    for (const it of mapaItems.values()) {
+      if (it.gMayor === 0 && it.gMenor > 0) {
+        it.gMayor = Math.round(it.gMenor * 1.25 * 10) / 10;
+      }
     }
   }
 
@@ -773,29 +782,6 @@ export default function ComprasTab() {
     generarPDFPlanillasTodasLasSemanas(todasLasSemanas);
   };
 
-  // Manejo de actualización de gramajes en línea para un día
-  const handleUpdateGramaje = (
-    numDia: number,
-    itemId: string,
-    campo: 'gMenor' | 'gMayor',
-    valor: number
-  ) => {
-    setItemsPorDia((prev) => {
-      const itemsDia = prev[numDia] ? [...prev[numDia]] : [];
-      const idx = itemsDia.findIndex((it) => it.id === itemId);
-      if (idx === -1) return prev;
-
-      itemsDia[idx] = {
-        ...itemsDia[idx],
-        [campo]: Math.max(0, valor),
-      };
-
-      return {
-        ...prev,
-        [numDia]: itemsDia,
-      };
-    });
-  };
 
   // Manejo de eliminación de un alimento de un día
   const handleConfirmEliminar = () => {
@@ -1690,7 +1676,7 @@ export default function ComprasTab() {
               </div>
             </div>
 
-            {/* TABLA EDITABLE CON LAS 10 COLUMNAS ESPECIFICADAS */}
+            {/* TABLA DE DETALLE DIARIO CON GRAMAJES OFICIALES ICBF (SOLO LECTURA) */}
             <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-2xs">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-100 text-slate-700 font-bold uppercase tracking-wider border-b border-slate-200">
@@ -1699,8 +1685,8 @@ export default function ComprasTab() {
                     <th className="p-3">Preparación</th>
                     <th className="p-3 text-center">Cód. TCAC</th>
                     <th className="p-3">Ingredientes (Alimento)</th>
-                    <th className="p-3 text-right">P. Bruto &lt; 3a (g)</th>
-                    <th className="p-3 text-right">P. Bruto &ge; 3a (g)</th>
+                    <th className="p-3 text-right" title="Peso bruto por ración según minuta oficial ICBF">P. Bruto &lt; 3a (g)</th>
+                    <th className="p-3 text-right" title="Peso bruto por ración según minuta oficial ICBF">P. Bruto &ge; 3a (g)</th>
                     <th className="p-3 text-right bg-sky-50/70 text-sky-950 font-extrabold">
                       Menor de 3 (g) <span className="block text-[9px] font-normal text-sky-700">({demografiaActiva.menores3} niños)</span>
                     </th>
@@ -1769,44 +1755,30 @@ export default function ComprasTab() {
                             {it.nombre}
                           </td>
 
-                          {/* 5. Peso Bruto < 3a (Editable en línea) */}
-                          <td className="p-2.5 text-right">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              value={it.gMenor}
-                              onChange={(e) =>
-                                handleUpdateGramaje(
-                                  diaSeleccionadoObj.numeroDiaCiclo,
-                                  it.id,
-                                  'gMenor',
-                                  parseFloat(e.target.value) || 0
-                                )
-                              }
-                              className="w-16 px-1.5 py-1 text-right font-mono font-bold bg-white border border-sky-300 rounded text-xs focus:ring-2 focus:ring-sky-500 shadow-2xs"
-                              title="Editar gramaje por ración para menores de 3 años"
-                            />
+                          {/* 5. Peso Bruto < 3a (g) - Solo lectura según minuta oficial ICBF */}
+                          <td className="p-2.5 text-right font-mono font-bold text-slate-800">
+                            <span
+                              className="inline-block px-2 py-0.5 rounded bg-slate-100/70 border border-slate-200/80 text-slate-800 text-xs font-mono font-bold"
+                              title="Peso bruto oficial ración minuta ICBF (< 3 años)"
+                            >
+                              {Number(it.gMenor || 0).toLocaleString('es-CO', {
+                                minimumFractionDigits: 0,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
                           </td>
 
-                          {/* 6. Peso Bruto >= 3a (Editable en línea) */}
-                          <td className="p-2.5 text-right">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              value={it.gMayor}
-                              onChange={(e) =>
-                                handleUpdateGramaje(
-                                  diaSeleccionadoObj.numeroDiaCiclo,
-                                  it.id,
-                                  'gMayor',
-                                  parseFloat(e.target.value) || 0
-                                )
-                              }
-                              className="w-16 px-1.5 py-1 text-right font-mono font-bold bg-white border border-purple-300 rounded text-xs focus:ring-2 focus:ring-purple-500 shadow-2xs"
-                              title="Editar gramaje por ración para mayores de 3 años"
-                            />
+                          {/* 6. Peso Bruto >= 3a (g) - Solo lectura según minuta oficial ICBF */}
+                          <td className="p-2.5 text-right font-mono font-bold text-slate-800">
+                            <span
+                              className="inline-block px-2 py-0.5 rounded bg-slate-100/70 border border-slate-200/80 text-slate-800 text-xs font-mono font-bold"
+                              title="Peso bruto oficial ración minuta ICBF (≥ 3 años)"
+                            >
+                              {Number(it.gMayor || 0).toLocaleString('es-CO', {
+                                minimumFractionDigits: 0,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
                           </td>
 
                           {/* 7. Menor de 3 (g) Calculado reactivo */}
