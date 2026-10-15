@@ -75,11 +75,11 @@ export interface ItemDiaCalculado extends DiaItemEditor {
 }
 
 const SEMANAS_PRESET = [
-  { id: 1, label: 'Semana 1 (Días 1 a 5)', dias: [1, 2, 3, 4, 5] },
-  { id: 2, label: 'Semana 2 (Días 6 a 10)', dias: [6, 7, 8, 9, 10] },
-  { id: 3, label: 'Semana 3 (Días 11 a 15)', dias: [11, 12, 13, 14, 15] },
-  { id: 4, label: 'Semana 4 (Días 16 a 20)', dias: [16, 17, 18, 19, 20] },
-  { id: 5, label: 'Semana 5 (Días 21 a 25)', dias: [21, 22, 23, 24, 25] },
+  { id: 1, label: 'Semana 1 (Días 1 a 5)', dias: [1, 2, 3, 4, 5], inicio: '1 de septiembre', fin: '5 de septiembre de 2026', entrega: '31 del mes 08 del año 2026' },
+  { id: 2, label: 'Semana 2 (Días 6 a 10)', dias: [6, 7, 8, 9, 10], inicio: '7 de septiembre', fin: '11 de septiembre de 2026', entrega: '5 del mes 09 del año 2026' },
+  { id: 3, label: 'Semana 3 (Días 11 a 15)', dias: [11, 12, 13, 14, 15], inicio: '14 de septiembre', fin: '18 de septiembre de 2026', entrega: '12 del mes 09 del año 2026' },
+  { id: 4, label: 'Semana 4 (Días 16 a 20)', dias: [16, 17, 18, 19, 20], inicio: '21 de septiembre', fin: '25 de septiembre de 2026', entrega: '19 del mes 09 del año 2026' },
+  { id: 5, label: 'Semana 5 (Días 21 a 25)', dias: [21, 22, 23, 24, 25], inicio: '28 de septiembre', fin: '2 de octubre de 2026', entrega: '26 del mes 09 del año 2026' },
 ];
 
 const NOMBRES_DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
@@ -385,6 +385,14 @@ export default function ComprasTab() {
 
     setDiasConfig(nuevosDiasConfig);
 
+    // Adaptar dinámicamente las fechas del encabezado y texto legal
+    setMetaInstitucional((prev) => ({
+      ...prev,
+      fechaInicio: preset.inicio,
+      fechaFin: preset.fin,
+      fechaEntrega: preset.entrega,
+    }));
+
     // Inicializar items para los nuevos días si aún no existen
     if (menusCiclo.length > 0) {
       setItemsPorDia((prev) => {
@@ -672,9 +680,9 @@ export default function ComprasTab() {
     }));
   };
 
-  // Búsqueda predictiva de alimentos para el modal de agregar alimento
+  // Búsqueda predictiva de alimentos para el panel y modal de agregar alimento
   useEffect(() => {
-    if (!showAddFoodModal || !addFoodSearch.trim()) {
+    if (!addFoodSearch.trim() || (addFoodSelected && addFoodSearch.trim() === addFoodSelected.nombre.trim())) {
       setAddFoodSearchResults([]);
       return;
     }
@@ -695,7 +703,7 @@ export default function ComprasTab() {
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [showAddFoodModal, addFoodSearch]);
+  }, [addFoodSearch, addFoodSelected]);
 
   // Confirmar adición de nuevo alimento al día
   const handleConfirmAgregarAlimento = (numDia: number) => {
@@ -990,7 +998,7 @@ export default function ComprasTab() {
                 }`}
                 title={`Haz clic para ver o editar el menú de ${dia.diaSemana}`}
               >
-                <div>
+                <div className="flex-1 mr-2">
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs font-black block text-slate-900">{dia.diaSemana}</span>
                     {estaSeleccionado && (
@@ -1000,40 +1008,31 @@ export default function ComprasTab() {
                   <span className="text-[10px] font-mono font-semibold block text-slate-500">
                     Menú Ciclo #{dia.numeroDiaCiclo}
                   </span>
-                  <span
-                    className={`text-[9px] font-bold uppercase mt-1 inline-block px-1.5 py-0.5 rounded ${
-                      dia.activo
-                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                        : 'bg-rose-200 text-rose-900 border border-rose-300 font-extrabold'
-                    }`}
-                  >
-                    {dia.activo ? 'Laborable' : 'Festivo / Anulado'}
-                  </span>
                 </div>
 
-                {/* BOTÓN VISUAL EXCLUSIVO PARA ANULAR O ACTIVAR EL DÍA */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleToggleDiaActivo(idx);
-                  }}
-                  className={`p-1.5 rounded-lg border transition-all flex flex-col items-center justify-center gap-0.5 shadow-2xs hover:scale-105 active:scale-95 ${
+                {/* CASILLA DE VERIFICACIÓN (CHECKLIST / CHECKBOX) EXPLÍCITA */}
+                <label
+                  onClick={(e) => e.stopPropagation()}
+                  className={`flex items-center gap-1.5 cursor-pointer px-2 py-1.5 rounded-lg border transition-all ${
                     dia.activo
-                      ? 'bg-emerald-100 hover:bg-emerald-200 border-emerald-300 text-emerald-800'
-                      : 'bg-rose-100 hover:bg-rose-200 border-rose-300 text-rose-800'
+                      ? 'bg-emerald-100/90 hover:bg-emerald-200/90 border-emerald-300 text-emerald-900 shadow-2xs'
+                      : 'bg-rose-100/90 hover:bg-rose-200/90 border-rose-300 text-rose-900 shadow-2xs'
                   }`}
-                  title={dia.activo ? 'Clic para anular este día (Festivo o No Laboral)' : 'Clic para reactivar este día'}
+                  title={dia.activo ? 'Desmarcar para anular día (Festivo / No Laboral)' : 'Marcar para activar como día laborable'}
                 >
-                  {dia.activo ? (
-                    <CheckCircle className="w-5 h-5 text-emerald-600" />
-                  ) : (
-                    <XCircle className="w-5 h-5 text-rose-600" />
-                  )}
-                  <span className="text-[8px] font-extrabold uppercase">
-                    {dia.activo ? 'Activo' : 'Anulado'}
+                  <input
+                    type="checkbox"
+                    checked={dia.activo}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      handleToggleDiaActivo(idx);
+                    }}
+                    className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                  />
+                  <span className="text-[10px] font-extrabold select-none whitespace-nowrap">
+                    {dia.activo ? '✓ Laborable' : '✕ Festivo / Anulado'}
                   </span>
-                </button>
+                </label>
               </div>
             );
           })}
@@ -1122,42 +1121,62 @@ export default function ComprasTab() {
             <div className="relative bg-white p-6 sm:p-7 rounded-2xl border border-slate-300 shadow-sm space-y-4">
               
               {/* Logo Oficial en la esquina superior derecha */}
-              <div className="absolute top-5 right-5 sm:top-6 sm:right-6 flex flex-col items-center">
+              <div className="absolute top-4 right-4 sm:top-5 sm:right-6 flex flex-col items-center gap-1 z-10">
                 <img
                   src={logoUrl || DEFAULT_LOGO_BASE64}
                   alt="Logo EAS"
                   className="w-20 h-20 sm:w-24 sm:h-24 object-contain rounded-xl p-1 bg-white border border-slate-200 shadow-2xs"
                 />
-                <button
-                  onClick={() => setShowEditMetaModal(true)}
-                  className="mt-1 text-[9px] font-bold text-emerald-700 hover:text-emerald-900 underline"
-                >
-                  Cambiar Logo
-                </button>
+                <label className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-md cursor-pointer transition-colors shadow-2xs">
+                  📷 Cambiar Logo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleLogoUpload}
+                    className="hidden"
+                  />
+                </label>
               </div>
 
               {/* Encabezado Institucional Centrado (Idéntico a la muestra oficial ICBF) */}
-              <div className="text-center space-y-1 pr-24 sm:pr-28 pl-4">
+              <div className="w-full text-center space-y-1 pt-1 pb-2 px-4 sm:px-28">
                 <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-wide uppercase">
                   PLANILLA DE ENTREGA DE ALIMENTOS
                 </h3>
                 <p className="text-xs font-bold text-slate-800 uppercase">
                   ENTIDAD ADMINISTRADORA DEL SERVICIO: <span className="font-extrabold text-slate-900">{metaInstitucional.eas}</span>
                 </p>
-                <p className="text-xs text-slate-600 font-semibold">
-                  NIT: {metaInstitucional.nit} &nbsp;•&nbsp; CONTRATO N°: {metaInstitucional.contrato} &nbsp;•&nbsp; MUNICIPIO: {metaInstitucional.municipio}
+                <p className="text-xs text-slate-700 font-bold uppercase">
+                  NIT: {metaInstitucional.nit}
                 </p>
-                <p className="text-xs text-slate-800 font-bold">
-                  NOMBRE DEL HCB: <span className="text-emerald-800">{metadatosCompletos.nombreUds}</span>
+                <p className="text-xs text-slate-700 font-bold uppercase">
+                  CONTRATO N°: {metaInstitucional.contrato}
                 </p>
-                <p className="text-xs text-slate-800 font-bold">
-                  NOMBRE DE LA MADRE COMUNITARIA: <span className="text-slate-900">{metadatosCompletos.madreComunitaria}</span>
+                <p className="text-xs text-slate-700 font-bold uppercase">
+                  MUNICIPIO: {metaInstitucional.municipio}
+                </p>
+                <p className="text-xs text-slate-800 font-bold uppercase">
+                  NOMBRE DEL HCB: <span className="text-emerald-800 font-extrabold">{metadatosCompletos.nombreUds}</span>
+                </p>
+                <p className="text-xs text-slate-800 font-bold uppercase">
+                  NOMBRE DE LA MADRE COMUNITARIA: <span className="text-slate-900 font-extrabold">{metadatosCompletos.madreComunitaria}</span>
                 </p>
               </div>
 
               {/* Declaración Legal Oficial */}
-              <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200 text-slate-700 text-xs leading-relaxed">
-                El día <strong>{metaInstitucional.fechaEntrega}</strong> se hizo la entrega a la madre comunitaria los productos alimenticios establecidos en la minuta patrón y lista de compra, para la preparación de los alimentos de los niños y niñas beneficiarios de la modalidad HCB; los cuales se relacionan a continuación: <strong>menú {textoCiclo}</strong>, semana del <strong>{metaInstitucional.fechaInicio}</strong> hasta el <strong>{metaInstitucional.fechaFin}</strong>:
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200">
+                <p className="text-slate-700 text-xs leading-relaxed text-justify sm:text-left flex-1">
+                  El día <strong>{metaInstitucional.fechaEntrega}</strong> se hizo la entrega a la madre comunitaria los productos alimenticos establecidos en la minuta patrón y lista de compra, para la preparación de los alimentos de los niños y niñas beneficiarios de la modalidad HCB; los cuales se relacionan a continuación: <strong>menú {textoCiclo}</strong>, semana del <strong>{metaInstitucional.fechaInicio}</strong> hasta el <strong>{metaInstitucional.fechaFin}</strong>:
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowEditMetaModal(true)}
+                  className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-800 bg-white border border-emerald-300 rounded-lg hover:bg-emerald-50 transition-colors shadow-2xs"
+                  title="Editar Fechas y Encabezado Oficial"
+                >
+                  <Edit3 className="w-3.5 h-3.5 text-emerald-600" />
+                  ✏️ Editar Fechas y Encabezado
+                </button>
               </div>
 
               {/* TABLA OFICIAL DE PRODUCTOS CON ENCABEZADO VERDE PASTEL #a9d08e OFICIAL */}
@@ -1266,6 +1285,7 @@ export default function ComprasTab() {
         {/* ============================================================== */}
         {diaSeleccionadoObj && (
           <div className="space-y-4">
+            {/* 1. INFORMACIÓN Y ESTADO DEL DÍA */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 bg-emerald-100 text-emerald-800 rounded-lg">
@@ -1290,27 +1310,173 @@ export default function ComprasTab() {
                 </div>
               </div>
 
-              {/* Botones de acción del día: Agregar Alimento y Restablecer Menú */}
+              {/* Botón de Restablecer Menú */}
               <div className="flex items-center gap-2 w-full sm:w-auto">
                 <button
-                  onClick={() => {
-                    setAddFoodPreparacion(preparacionesSugeridas[0] || 'ALMUERZO');
-                    setShowAddFoodModal(true);
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
-                >
-                  <Plus className="w-4 h-4" />
-                  Agregar Alimento al Día
-                </button>
-
-                <button
                   onClick={() => handleRestablecerMenuDia(diaSeleccionadoObj.numeroDiaCiclo)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold border border-slate-300 transition-colors shadow-2xs"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-bold border border-slate-300 transition-colors shadow-2xs"
                   title="Restablecer los alimentos originales del ciclo para este día"
                 >
                   <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-                  Restablecer Menú
+                  Restablecer Menú Original
                 </button>
+              </div>
+            </div>
+
+            {/* 2. PANEL SUPERIOR VISIBLE: "+ AGREGAR ALIMENTO A ESTE DÍA" */}
+            <div className="bg-emerald-50/70 border border-emerald-300 rounded-xl p-4 space-y-3 shadow-2xs">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-emerald-700 text-white rounded-lg">
+                  <Plus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h5 className="font-extrabold text-xs text-slate-900 uppercase tracking-wide">
+                    + Agregar Alimento a este Día ({diaSeleccionadoObj.diaSemana} - Menú #{diaSeleccionadoObj.numeroDiaCiclo})
+                  </h5>
+                  <p className="text-[11px] text-slate-600">
+                    Selecciona tiempo, preparación, busca por Cód. TCAC o nombre y define los pesos brutos.
+                  </p>
+                </div>
+              </div>
+
+              {/* Formulario Reactivo e Interactivo */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end text-xs">
+                {/* Selector de Tiempo de Comida */}
+                <div className="sm:col-span-2">
+                  <label className="font-bold text-slate-700 block mb-1">Tiempo de Comida:</label>
+                  <select
+                    value={addFoodTiempo}
+                    onChange={(e) => setAddFoodTiempo(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500 text-xs"
+                  >
+                    {TIEMPOS_COMIDA_DEFAULT.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Input de Preparación con Datalist de autocompletado */}
+                <div className="sm:col-span-3">
+                  <label className="font-bold text-slate-700 block mb-1">Preparación:</label>
+                  <input
+                    type="text"
+                    list={`preparaciones-list-${diaSeleccionadoObj.numeroDiaCiclo}`}
+                    placeholder="Ej. SOPA DE VERDURAS..."
+                    value={addFoodPreparacion}
+                    onChange={(e) => setAddFoodPreparacion(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 text-xs font-medium uppercase"
+                  />
+                  <datalist id={`preparaciones-list-${diaSeleccionadoObj.numeroDiaCiclo}`}>
+                    {preparacionesSugeridas.map((p) => (
+                      <option key={p} value={p} />
+                    ))}
+                  </datalist>
+                </div>
+
+                {/* Buscador predictivo de Alimento (Cód. TCAC o Nombre) */}
+                <div className="sm:col-span-3 relative">
+                  <label className="font-bold text-slate-700 block mb-1">
+                    Alimento (Cód. TCAC o Nombre):
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Cód. (ej. 01002) o nombre..."
+                      value={addFoodSearch}
+                      onChange={(e) => {
+                        setAddFoodSearch(e.target.value);
+                        if (addFoodSelected && e.target.value !== addFoodSelected.nombre) {
+                          setAddFoodSelected(null);
+                        }
+                      }}
+                      className={`w-full px-2.5 py-1.5 bg-white border rounded-lg focus:ring-2 focus:ring-emerald-500 text-xs ${
+                        addFoodSelected ? 'border-emerald-500 font-bold text-emerald-900 bg-emerald-50/50' : 'border-slate-300'
+                      }`}
+                    />
+                    {addFoodSearching && (
+                      <span className="absolute right-2 top-2 text-[9px] text-slate-400 font-semibold animate-pulse">
+                        ...
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Dropdown flotante con resultados predictivos */}
+                  {addFoodSearchResults.length > 0 && !addFoodSelected && (
+                    <div className="absolute left-0 right-0 top-full mt-1 z-30 max-h-48 overflow-y-auto bg-white border border-slate-300 rounded-xl shadow-lg divide-y divide-slate-100">
+                      {addFoodSearchResults.map((alim) => (
+                        <div
+                          key={alim.id}
+                          onClick={() => {
+                            setAddFoodSelected(alim);
+                            setAddFoodSearch(alim.nombre);
+                            setAddFoodSearchResults([]);
+                          }}
+                          className="p-2 hover:bg-emerald-50 cursor-pointer flex justify-between items-center text-xs transition-colors"
+                        >
+                          <div>
+                            <span className="font-bold text-slate-900 block">{alim.nombre}</span>
+                            <span className="text-[10px] text-slate-500">
+                              Cód: {alim.codigo_icbf || 'S/C'} • {alim.grupo_alimento}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                            {alim.presentacion_comercial_gramos || 1000}g
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {addFoodSelected && (
+                    <span className="block text-[10px] text-emerald-800 font-bold mt-0.5 truncate">
+                      ✓ Cód. {addFoodSelected.codigo_icbf || 'S/C'}: {addFoodSelected.nombre}
+                    </span>
+                  )}
+                </div>
+
+                {/* Inputs numéricos: P. Bruto < 3a (g) y P. Bruto >= 3a (g) */}
+                <div className="sm:col-span-1">
+                  <label className="font-bold text-sky-900 block mb-1 text-[11px] whitespace-nowrap">
+                    &lt; 3a (g):
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={addFoodGMenor}
+                    onChange={(e) => setAddFoodGMenor(e.target.value)}
+                    className="w-full px-2 py-1.5 bg-white border border-sky-300 rounded-lg text-xs font-mono font-bold text-right"
+                  />
+                </div>
+
+                <div className="sm:col-span-1">
+                  <label className="font-bold text-purple-900 block mb-1 text-[11px] whitespace-nowrap">
+                    &ge; 3a (g):
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={addFoodGMayor}
+                    onChange={(e) => setAddFoodGMayor(e.target.value)}
+                    className="w-full px-2 py-1.5 bg-white border border-purple-300 rounded-lg text-xs font-mono font-bold text-right"
+                  />
+                </div>
+
+                {/* Botón Agregar a la Lista */}
+                <div className="sm:col-span-2">
+                  <button
+                    type="button"
+                    disabled={!addFoodSelected}
+                    onClick={() => handleConfirmAgregarAlimento(diaSeleccionadoObj.numeroDiaCiclo)}
+                    className="w-full py-1.5 px-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-xs flex items-center justify-center gap-1"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    + Agregar a la Lista
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1322,7 +1488,7 @@ export default function ComprasTab() {
                     <th className="p-3">Tiempo de Comida</th>
                     <th className="p-3">Preparación</th>
                     <th className="p-3 text-center">Cód. TCAC</th>
-                    <th className="p-3">Ingrediente / Alimento</th>
+                    <th className="p-3">Ingredientes (Alimento)</th>
                     <th className="p-3 text-right">P. Bruto &lt; 3a (g)</th>
                     <th className="p-3 text-right">P. Bruto &ge; 3a (g)</th>
                     <th className="p-3 text-right bg-sky-50/70 text-sky-950 font-extrabold">
@@ -1334,7 +1500,7 @@ export default function ComprasTab() {
                     <th className="p-3 text-right bg-emerald-50 text-emerald-950 font-black">
                       Total Día (g)
                     </th>
-                    <th className="p-3 text-center w-12">Acción</th>
+                    <th className="p-3 text-center w-12">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">

@@ -336,44 +336,49 @@ export function generarPDFPlanillaEntregaOficialUDS(
   }>
 ) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const centerX = pageWidth / 2;
 
   // 1. Dibujar Logo Oficial en la esquina superior derecha
   const logoToUse = meta.logoBase64 || DEFAULT_LOGO_BASE64;
   if (logoToUse) {
     try {
-      doc.addImage(logoToUse, 'JPEG', 170, 8, 30, 30);
+      const logoSize = 25;
+      doc.addImage(logoToUse, 'JPEG', pageWidth - 14 - logoSize, 8, logoSize, logoSize);
     } catch (e) {
       console.warn('No se pudo incrustar el logo en el PDF:', e);
     }
   }
 
-  // 2. Encabezado institucional centrado (Estilo exacto de la plantilla ICBF)
+  // 2. Encabezado institucional estrictamente centrado en el ancho completo de la página
   doc.setTextColor(15, 23, 42);
-  doc.setFontSize(11);
+  doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
-  doc.text('PLANILLA DE ENTREGA DE ALIMENTOS', 100, 14, { align: 'center' });
+  doc.text('PLANILLA DE ENTREGA DE ALIMENTOS', centerX, 14, { align: 'center' });
 
-  doc.setFontSize(9);
-  doc.text(`ENTIDAD ADMINISTRADORA DEL SERVICIO: ${meta.eas || 'ASOCIACION DE FAMILIA DE HCB DE CAIMITO-SUCRE'}`, 100, 19, { align: 'center' });
-  doc.text(`NIT: ${meta.nit || '8230002828 - 6'}`, 100, 24, { align: 'center' });
-  doc.text(`CONTRATO N°: ${meta.contrato || '70005732024'}`, 100, 29, { align: 'center' });
-  doc.text(`MUNICIPIO: ${meta.municipio || 'CAIMITO-SUCRE'}`, 100, 34, { align: 'center' });
-  doc.text(`NOMBRE DEL HCB: ${meta.nombreUds || 'Travesuras Infantiles'}`, 100, 39, { align: 'center' });
-  doc.text(`NOMBRE DE LA MADRE COMUNITARIA: ${meta.madreComunitaria || 'Ana Acevedo'}`, 100, 44, { align: 'center' });
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`ENTIDAD ADMINISTRADORA DEL SERVICIO: ${meta.eas || 'ASOCIACION DE FAMILIA DE HCB DE CAIMITO-SUCRE'}`, centerX, 19, { align: 'center' });
+  doc.text(`NIT: ${meta.nit || '8230002828 - 6'}`, centerX, 24, { align: 'center' });
+  doc.text(`CONTRATO N°: ${meta.contrato || '70005732024'}`, centerX, 29, { align: 'center' });
+  doc.text(`MUNICIPIO: ${meta.municipio || 'CAIMITO-SUCRE'}`, centerX, 34, { align: 'center' });
+  doc.text(`NOMBRE DEL HCB: ${meta.nombreUds || 'Travesuras Infantiles'}`, centerX, 39, { align: 'center' });
+  doc.text(`NOMBRE DE LA MADRE COMUNITARIA: ${meta.madreComunitaria || 'Ana Acevedo'}`, centerX, 44, { align: 'center' });
 
-  // 3. Declaración Legal Oficial
-  let y = 50;
+  // 3. Declaración Legal Oficial Dinámica
+  let y = 49;
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(14, y, 187.9, 14, 2, 2, 'F');
+  doc.roundedRect(14, y, pageWidth - 28, 14, 2, 2, 'F');
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(30, 41, 59);
 
-  const textoLegal = `El día ${meta.fechaEntrega || '26 del mes 09 del año 2026'} se hizo la entrega a la madre comunitaria los productos alimenticos establecidos en la minuta patrón y lista  de compra, para la preparación  de los alimentos de los niños y niñas beneficiarios de la modalidad HCB; los cuales se relacionan a continuación: menú ${meta.diasCicloTexto || '21 - 25'}, semana del ${meta.fechaInicio || '28 de septiembre'} hasta el ${meta.fechaFin || '2 de octubre de 2026'}`;
-  doc.text(textoLegal, 17, y + 5, { maxWidth: 182 });
+  const textoLegal = `El día ${meta.fechaEntrega || '26 del mes 09 del año 2026'} se hizo la entrega a la madre comunitaria los productos alimenticos establecidos en la minuta patrón y lista de compra, para la preparación de los alimentos de los niños y niñas beneficiarios de la modalidad HCB; los cuales se relacionan a continuación: menú ${meta.diasCicloTexto || '21 - 25'}, semana del ${meta.fechaInicio || '28 de septiembre'} hasta el ${meta.fechaFin || '2 de octubre de 2026'}`;
+  doc.text(textoLegal, 17, y + 4.5, { maxWidth: pageWidth - 34 });
   y += 18;
 
-  // 4. Tabla de Productos Entregados (con encabezado verde #a9d08e oficial de la muestra)
+  // 4. Tabla de Productos Entregados (con encabezado verde #a9d08e oficial de la muestra ICBF)
   const bodyRows = items.map((it, idx) => [
     `${idx + 1}`,
     it.producto,
@@ -382,17 +387,35 @@ export function generarPDFPlanillaEntregaOficialUDS(
     'Conforme'
   ]);
 
+  const totalGramos = items.reduce((acc, it) => acc + (it.totalGramos || 0), 0);
+  const footRows = [
+    [
+      '',
+      `TOTAL CONSOLIDADO SEMANAL (${items.length} PRODUCTOS)`,
+      `${totalGramos.toLocaleString('es-CO')}`,
+      `${(totalGramos / 1000).toFixed(2)} kg`,
+      '100% Entregado'
+    ]
+  ];
+
   autoTable(doc, {
     startY: y,
     head: [['N°', 'PRODUCTO', 'UNIDAD DE MEDIDA ( GRAMOS- ML)', 'EQUIVALENTE', 'ESTADO']],
     body: bodyRows,
+    foot: footRows,
     theme: 'grid',
     headStyles: { 
-      fillColor: [169, 208, 142], // Verde pastel oficial #a9d08e (como en el Excel del usuario)
+      fillColor: [169, 208, 142], // Verde pastel oficial #a9d08e (idéntico a la muestra ICBF)
       textColor: [0, 0, 0], 
       fontStyle: 'bold', 
       fontSize: 8,
       halign: 'center'
+    },
+    footStyles: {
+      fillColor: [241, 245, 249],
+      textColor: [15, 23, 42],
+      fontStyle: 'bold',
+      fontSize: 8,
     },
     styles: { fontSize: 7.5, cellPadding: 2, minCellHeight: 5.5, textColor: [30, 41, 59] },
     columnStyles: {
@@ -409,12 +432,12 @@ export function generarPDFPlanillaEntregaOficialUDS(
   let signatureY = finalY + 16;
 
   // Si no cabe en la misma página, añadir nueva página
-  if (signatureY > 240) {
+  if (signatureY > pageHeight - 35) {
     doc.addPage();
     signatureY = 40;
   }
 
-  // 5. Líneas de Firmas Oficiales
+  // 5. Bloque de Firmas Oficiales
   doc.setLineWidth(0.4);
   doc.setDrawColor(100, 116, 139);
 

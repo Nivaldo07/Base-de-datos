@@ -128,49 +128,69 @@ export function generarExcelProyeccionYPlanilla(
   });
 
   // 2. GENERAR HOJA FINAL: "PLANILLA DE ENTREGA"
-  const textoEncabezadoLegal = `PLANILLA DE ENTREGA DE ALIMENTOS
-ENTIDAD ADMINISTRADORA DEL SERVICIO: ${meta.eas || 'ASOCIACION DE FAMILIA DE HCB DE CAIMITO-SUCRE'}
-NIT: ${meta.nit || '8230002828 - 6'}
-CONTRATO N°: ${meta.contrato || '70005732024'}
-MUNICIPIO: ${meta.municipio || 'CAIMITO-SUCRE'}
-NOMBRE DEL HCB: ${meta.nombreUds || 'Travesuras Infantiles'}
-NOMBRE DE LA MADRE COMUNITARIA: ${meta.madreComunitaria || 'Ana Acevedo'}
-
-El día ${meta.fechaEntrega || '26 del mes 09 del año 2026'} se hizo la entrega a la madre comunitaria los productos alimenticos establecidos en la minuta patrón y lista de compra, para la preparación de los alimentos de los niños y niñas beneficiarios de la modalidad HCB; los cuales se relacionan a continuación: menú ${meta.diasCicloTexto || '21 - 25'}, semana del ${meta.fechaInicio || '28 de septiembre'} hasta el ${meta.fechaFin || '2 de octubre de 2026'}`;
-
   const planillaRows: any[][] = [];
 
-  // Filas del encabezado
-  planillaRows.push([textoEncabezadoLegal]);
+  // Filas del encabezado institucional (cada línea en su propia fila centrada)
+  planillaRows.push(['', 'PLANILLA DE ENTREGA DE ALIMENTOS']);
+  planillaRows.push(['', `ENTIDAD ADMINISTRADORA DEL SERVICIO: ${meta.eas || 'ASOCIACION DE FAMILIA DE HCB DE CAIMITO-SUCRE'}`]);
+  planillaRows.push(['', `NIT: ${meta.nit || '8230002828 - 6'}`]);
+  planillaRows.push(['', `CONTRATO N°: ${meta.contrato || '70005732024'}`]);
+  planillaRows.push(['', `MUNICIPIO: ${meta.municipio || 'CAIMITO-SUCRE'}`]);
+  planillaRows.push(['', `NOMBRE DEL HCB: ${meta.nombreUds || 'Travesuras Infantiles'}`]);
+  planillaRows.push(['', `NOMBRE DE LA MADRE COMUNITARIA: ${meta.madreComunitaria || 'Ana Acevedo'}`]);
   planillaRows.push([]);
-  planillaRows.push([]);
-  planillaRows.push([]);
-  planillaRows.push(['', 'PRODUCTO', 'UNIDAD DE MEDIDA ( GRAMOS- ML)']);
 
-  // Filas de productos ordenados
+  // Párrafo de declaración legal oficial
+  const textoLegal = `El día ${meta.fechaEntrega || '26 del mes 09 del año 2026'} se hizo la entrega a la madre comunitaria los productos alimenticos establecidos en la minuta patrón y lista de compra, para la preparación de los alimentos de los niños y niñas beneficiarios de la modalidad HCB; los cuales se relacionan a continuación: menú ${meta.diasCicloTexto || '21 - 25'}, semana del ${meta.fechaInicio || '28 de septiembre'} hasta el ${meta.fechaFin || '2 de octubre de 2026'}`;
+  planillaRows.push(['', textoLegal]);
+  planillaRows.push([]);
+
+  // Encabezados de la tabla oficial de entrega
+  planillaRows.push(['', 'PRODUCTO', 'UNIDAD DE MEDIDA ( GRAMOS- ML)', 'EQUIVALENTE (KG)']);
+
+  // Filas de productos ordenados y totalizados sin duplicados
   consolidado.forEach((prod) => {
     planillaRows.push([
       '',
       prod.producto,
-      prod.totalGramos
+      prod.totalGramos,
+      Number((prod.totalGramos / 1000).toFixed(2))
     ]);
   });
 
+  // Fila de total consolidado
+  const totalGramosExcel = consolidado.reduce((acc, p) => acc + (p.totalGramos || 0), 0);
+  planillaRows.push([
+    '',
+    `TOTAL CONSOLIDADO SEMANAL (${consolidado.length} PRODUCTOS):`,
+    totalGramosExcel,
+    Number((totalGramosExcel / 1000).toFixed(2))
+  ]);
+
   // Espacio de firmas oficiales
   planillaRows.push([]);
+  planillaRows.push([]);
+  planillaRows.push(['', 'RECIBIO A SATISFACCION', '', 'ENTREGO']);
   planillaRows.push([
-    `RECIBIO A SATISFACCION: ________________________________________      ENTREGO: _____________________________________________________`
+    '',
+    `Madre Comunitaria: ${meta.madreComunitaria || 'Ana Acevedo'}`,
+    '',
+    'Nutricionista / Supervisor ICBF / EAS'
   ]);
   planillaRows.push([
-    `Madre Comunitaria: ${meta.madreComunitaria || 'Ana Acevedo'}                              Nutricionista / Supervisor ICBF / Proveedor`
+    '',
+    'C.C. ________________________________',
+    '',
+    'T.P. / C.C. ________________________________'
   ]);
 
   const wsPlanilla = XLSX.utils.aoa_to_sheet(planillaRows);
 
   wsPlanilla['!cols'] = [
     { wch: 4 },
-    { wch: 50 },
+    { wch: 55 },
     { wch: 35 },
+    { wch: 22 },
   ];
 
   XLSX.utils.book_append_sheet(wb, wsPlanilla, 'PLANILLA DE ENTREGA');
