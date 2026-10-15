@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Save, Plus, Trash2, Upload, ChevronDown, ChevronRight, FileSpreadsheet } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { AlimentoTCAC } from '@prisma/client';
+import { cleanPreparationName } from '@/lib/cleaners';
 
 interface GrupoEtario {
   id: number;
@@ -40,7 +41,14 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
         .then(res => res.json())
         .then(data => {
           if (data && data.length > 0) {
-            setMenuCurrent(data[0]);
+            const loaded = data[0];
+            if (loaded?.preparaciones) {
+              loaded.preparaciones = loaded.preparaciones.map((p: any) => ({
+                ...p,
+                nombre: cleanPreparationName(p.nombre)
+              }));
+            }
+            setMenuCurrent(loaded);
           } else {
             setMenuCurrent({
               numero_dia: selectedDia,
@@ -132,10 +140,17 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
   const saveMenu = async () => {
     try {
       setLoading(true);
+      const payload = {
+        ...menuCurrent,
+        preparaciones: (menuCurrent?.preparaciones || []).map((p: any) => ({
+          ...p,
+          nombre: cleanPreparationName(p.nombre)
+        }))
+      };
       await fetch('/api/menus', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(menuCurrent)
+        body: JSON.stringify(payload)
       });
       alert('Menú guardado exitosamente.');
     } catch (err) {
@@ -171,6 +186,12 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
           return res.json();
         })
         .then((resultData) => {
+          if (resultData?.preparaciones) {
+            resultData.preparaciones = resultData.preparaciones.map((p: any) => ({
+              ...p,
+              nombre: cleanPreparationName(p.nombre)
+            }));
+          }
           setMenuCurrent(resultData);
           if (resultData.detected_dia) {
             setSelectedDia(resultData.detected_dia);
@@ -216,6 +237,12 @@ export default function MinutasTab({ tcacDatabase }: MinutasTabProps) {
         if (!response.ok) throw new Error('Error al importar el archivo');
         
         const resultData = await response.json();
+        if (resultData?.preparaciones) {
+          resultData.preparaciones = resultData.preparaciones.map((p: any) => ({
+            ...p,
+            nombre: cleanPreparationName(p.nombre)
+          }));
+        }
         setMenuCurrent(resultData);
         alert('¡Menú importado correctamente desde Excel!');
         setIsGridExpanded(true);

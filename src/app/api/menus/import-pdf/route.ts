@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { parseMinutaPDF } from '@/lib/pdfMinutaParser';
+import { cleanPreparationName } from '@/lib/cleaners';
 
 export async function POST(request: Request) {
   try {
@@ -224,7 +225,7 @@ export async function POST(request: Request) {
 
       if (resolvedIngredientes.length > 0) {
         validPreps.push({
-          nombre: prep.nombre,
+          nombre: cleanPreparationName(prep.nombre),
           tiempo_comida: prep.tiempo_comida,
           ingredientes: resolvedIngredientes
         });

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { cleanPreparationName } from '@/lib/cleaners';
 
 export async function POST(request: Request) {
   try {
@@ -148,7 +149,7 @@ export async function POST(request: Request) {
 
       // Detect Preparation
       if (colPrep && !colPrep.includes('NOMBRE DE LA PREPARACION') && !colPrep.includes('APORTE DE LA MINUTA PATRON')) {
-        currentPrepNombre = row[colIdx.prep]?.toString().trim(); // Keep original casing for display
+        currentPrepNombre = cleanPreparationName(row[colIdx.prep]?.toString()); // Keep clean name
         activePrep = {
           nombre: currentPrepNombre,
           tiempo_comida: currentTiempo,

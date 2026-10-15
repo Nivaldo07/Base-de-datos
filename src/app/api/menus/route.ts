@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { cleanPreparationName } from '@/lib/cleaners';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
         grupo_etario_id: grupo.id,
         preparaciones: {
           create: preparaciones.map((prep: any) => ({
-            nombre: prep.nombre,
+            nombre: cleanPreparationName(prep.nombre),
             tiempo_comida: prep.tiempo_comida,
             ingredientes: {
               create: prep.ingredientes.map((ing: any) => ({

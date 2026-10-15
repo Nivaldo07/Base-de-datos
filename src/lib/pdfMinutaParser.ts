@@ -1,5 +1,6 @@
 import PDFParser from 'pdf2json';
 import { GoogleGenAI } from '@google/genai';
+import { cleanPreparationName, isMealKeyword } from './cleaners';
 
 export interface ParsedIngredient {
   codigo_tcac: string;
@@ -213,7 +214,7 @@ function alignIngredientsToPrepsSemantic(
   }
 
   return preps.map((p, j) => ({
-    nombre: p.text.replace(/\s+/g, ' ').trim(),
+    nombre: cleanPreparationName(p.text),
     tiempo_comida: p.meal,
     ingredientes: ingrs.slice(splits[j].start, splits[j].end).map(ing => ({
       codigo_tcac: ing.tcac,
@@ -303,25 +304,38 @@ function parseSpatialClustering(texts: any[]): ParsedPreparacion[] {
   });
 
   // 4. Extract Preparations from Column 2 (between meals and code column)
-  const rawPrepTexts = texts.filter((t: any) =>
-    t.y >= tableStartY && t.y < tableEnd &&
-    t.x >= 1.8 && t.x <= medianCodeX - 0.4 &&
-    !t.text.toUpperCase().includes('NOMBRE DE LA PREP') &&
-    !t.text.toUpperCase().includes('INGREDIENTES') &&
-    !t.text.toUpperCase().includes('TIEMPO DE COMIDA') &&
-    !t.text.toUpperCase().includes('CÓDIG')
-  ).sort((a: any, b: any) => a.y - b.y);
+  const rawPrepTexts = texts.filter((t: any) => {
+    if (t.y < tableStartY || t.y >= tableEnd) return false;
+    if (t.x < 1.8 || t.x > medianCodeX - 0.4) return false;
+    const u = t.text.toUpperCase().trim();
+    if (
+      u.includes('NOMBRE DE LA PREP') ||
+      u.includes('INGREDIENTES') ||
+      u.includes('TIEMPO DE COMIDA') ||
+      u.includes('CÓDIG')
+    ) {
+      return false;
+    }
+    // Descartar si el elemento es exactamente una palabra clave de tiempo de comida
+    if (isMealKeyword(u)) {
+      return false;
+    }
+    return true;
+  }).sort((a: any, b: any) => a.y - b.y);
 
   const prepLabels: { text: string; y: number }[] = [];
 
   for (const t of rawPrepTexts) {
+    const cleanedText = cleanPreparationName(t.text);
+    if (!cleanedText) continue;
+
     if (prepLabels.length === 0) {
-      prepLabels.push({ text: t.text, y: t.y });
+      prepLabels.push({ text: cleanedText, y: t.y });
       continue;
     }
     const prev = prepLabels[prepLabels.length - 1];
     const prevUpper = prev.text.toUpperCase().trim();
-    const currUpper = t.text.toUpperCase().trim();
+    const currUpper = cleanedText.toUpperCase().trim();
     const prevLastWord = prevUpper.split(/\s+/).pop() || '';
     const currFirstWord = currUpper.split(/\s+/)[0] || '';
 
@@ -331,9 +345,9 @@ function parseSpatialClustering(texts: any[]): ParsedPreparacion[] {
       (t.y - prev.y <= 0.45 && !DISH_START_WORDS.some(w => currUpper.startsWith(w)));
 
     if (isContinuation) {
-      prev.text += ' ' + t.text;
+      prev.text = cleanPreparationName(prev.text + ' ' + cleanedText);
     } else {
-      prepLabels.push({ text: t.text, y: t.y });
+      prepLabels.push({ text: cleanedText, y: t.y });
     }
   }
 
@@ -446,12 +460,12 @@ function parseTextStream(texts: any[]): ParsedPreparacion[] {
 
       const leftItems = line.items.slice(0, codeIndex).filter(it => {
         const u = it.text.toUpperCase();
-        return !u.includes('REFRIGERIO') && !u.includes('ALMUERZO') && !u.includes('DESAYUNO') &&
+        return !u.includes('REFRIGERIO') && !u.includes('ALMUERZO') && !u.includes('DESAYUNO') && !u.includes('CENA') &&
                !u.includes('TIEMPO') && !u.includes('PREPARACION') && !u.includes('CÓDIG');
       });
 
       if (leftItems.length > 0) {
-        const candidatePrep = leftItems.map(it => it.text).join(' ').trim();
+        const candidatePrep = cleanPreparationName(leftItems.map(it => it.text).join(' '));
         if (candidatePrep.length >= 3) {
           currentPrep = candidatePrep;
         }
@@ -488,7 +502,7 @@ function parseTextStream(texts: any[]): ParsedPreparacion[] {
         costo_unitario_excel: null
       });
     } else {
-      const cleanLine = lineText.replace(/TIEMPO DE COMIDA|NOMBRE DE LA PREPARACI[ÓO]N|INGREDIENTES|PESO BRUTO|PESO NETO/gi, '').trim();
+      const cleanLine = cleanPreparationName(lineText.replace(/TIEMPO DE COMIDA|NOMBRE DE LA PREPARACI[ÓO]N|INGREDIENTES|PESO BRUTO|PESO NETO/gi, ''));
       if (cleanLine.length >= 3 && cleanLine === cleanLine.toUpperCase() && !lineUpper.includes('PROCESO') && !lineUpper.includes('FORMATO') && !lineUpper.includes('ANÁLISIS')) {
         currentPrep = cleanLine;
       }
@@ -496,7 +510,7 @@ function parseTextStream(texts: any[]): ParsedPreparacion[] {
   }
 
   return Array.from(prepsMap.entries()).map(([nombre, data]) => ({
-    nombre,
+    nombre: cleanPreparationName(nombre),
     tiempo_comida: data.meal,
     ingredientes: data.ingredientes
   }));
@@ -636,7 +650,7 @@ Responde ÚNICAMENTE con un objeto JSON válido con este formato:
       numero_dia: data.numero_dia || null,
       grupo_etario: data.grupo_etario || null,
       preparaciones: (data.preparaciones || []).map((p: any) => ({
-        nombre: p.nombre,
+        nombre: cleanPreparationName(p.nombre || ''),
         tiempo_comida: p.tiempo_comida,
         ingredientes: (p.ingredientes || []).map((i: any) => ({
           codigo_tcac: String(i.codigo_tcac || '').trim().toUpperCase(),
