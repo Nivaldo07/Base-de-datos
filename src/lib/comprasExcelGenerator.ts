@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
 
 export interface DiaProyeccionExcel {
   diaSemana: string;
@@ -118,6 +119,9 @@ function construirHojaDiariaMenu(dia: DiaProyeccionExcel): XLSX.WorkSheet {
     { wch: 14 }, // Col J: Total día
   ];
 
+  ws['!pageSetup'] = { paperSize: 1, orientation: 'landscape', fitToWidth: 1, fitToHeight: 1 };
+  ws['!margins'] = { left: 0.4, right: 0.4, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 };
+
   return ws;
 }
 
@@ -144,12 +148,10 @@ function construirHojaMadreComunitaria(
   // Fila 1
   planillaRows.push([null, textoLegalEncabezado]);
 
-  // Filas 2, 3, 4 (espaciado oficial)
-  planillaRows.push([]);
-  planillaRows.push([]);
+  // Fila vacía entre encabezado y tabla (reducido de 3 filas a 1 sola para que quepa en 1 hoja Carta)
   planillaRows.push([]);
 
-  // Fila 5: Encabezados de productos oficiales
+  // Fila: Encabezados de productos oficiales
   planillaRows.push([null, 'PRODUCTO', 'UNIDAD DE MEDIDA ( GRAMOS- ML)']);
 
   // Filas de productos consolidados (sin duplicados)
@@ -157,12 +159,17 @@ function construirHojaMadreComunitaria(
     planillaRows.push([null, prod.producto, prod.totalGramos]);
   });
 
-  // Fila de firmas al final
+  // Fila de firmas al final (compacta, sin saltos de línea gigantes)
+  planillaRows.push([]);
   planillaRows.push([
-    '\r\nRECIBIO A SATISFACCION________________________________________\r\nENTREGO _____________________________________________________',
+    null,
+    'RECIBIO A SATISFACCION: ____________________________________',
+    'ENTREGO: ____________________________________',
   ]);
   planillaRows.push([
+    null,
     `Madre Comunitaria: ${meta.madreComunitaria || 'Ana Acevedo'}`,
+    'Nutricionista / Supervisor ICBF / EAS',
   ]);
 
   const wsPlanilla = XLSX.utils.aoa_to_sheet(planillaRows);
@@ -177,20 +184,146 @@ function construirHojaMadreComunitaria(
     { wch: 35 }, // Col C: Unidad de Medida (Gramos - mL)
   ];
 
+  wsPlanilla['!pageSetup'] = { paperSize: 1, orientation: 'portrait', fitToWidth: 1, fitToHeight: 1 };
+  wsPlanilla['!margins'] = { left: 0.4, right: 0.4, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 };
+
   return wsPlanilla;
 }
 
 /**
- * Genera el archivo Excel oficial para una semana (5 días + Hoja de la Madre Comunitaria)
- * Estructura 100% idéntica a media_1792018094108_1545759b.xlsx:
- * - Hojas 1 a 5: "MENU 21", "MENU 22", ...
- * - Hoja final: Nombre de la Madre Comunitaria en MAYÚSCULAS (ej. "ANA ACEVEDO")
+ * Parchea el XML de una hoja de cálculo para forzar ajuste a 1 página (Letter, fitToPage)
+ * según el estándar OpenXML (ECMA-376).
  */
-export function generarExcelProyeccionYPlanilla(
+function patchSheetXml(xml: string, orientation: 'landscape' | 'portrait'): string {
+  // 1. <sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
+  // En OpenXML, sheetPr DEBE ir antes de dimension, sheetViews, etc.
+  if (xml.includes('<sheetPr')) {
+    if (!xml.includes('<pageSetUpPr')) {
+      xml = xml.replace(/(<sheetPr[^>]*>)/, '$1<pageSetUpPr fitToPage="1"/>');
+    } else {
+      xml = xml.replace(/<pageSetUpPr[^>]*\/>/, '<pageSetUpPr fitToPage="1"/>');
+    }
+  } else {
+    xml = xml.replace(/(<worksheet[^>]*>)/, '$1<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+  }
+
+  // 2. Eliminar pageMargins y pageSetup previos si existen
+  xml = xml.replace(/<pageMargins[^>]*\/>/g, '');
+  xml = xml.replace(/<pageSetup[^>]*\/>/g, '');
+
+  // 3. Insertar configuración de márgenes y tamaño Carta (paperSize: 1, fitToWidth: 1, fitToHeight: 1)
+  const pageSetupTags = `<pageMargins left="0.4" right="0.4" top="0.4" bottom="0.4" header="0.2" footer="0.2"/><pageSetup paperSize="1" orientation="${orientation}" fitToWidth="1" fitToHeight="1"/>`;
+
+  const insertRegex = /(<headerFooter|<rowBreaks|<colBreaks|<customProperties|<cellWatches|<ignoredErrors|<smartTags|<drawing|<legacyDrawing|<\/worksheet)/;
+  if (insertRegex.test(xml)) {
+    xml = xml.replace(insertRegex, `${pageSetupTags}$1`);
+  } else {
+    xml = xml.replace('</worksheet>', `${pageSetupTags}</worksheet>`);
+  }
+
+  return xml;
+}
+
+/**
+ * Empaqueta el workbook en XLSX, parchea los XML de cada hoja con JSZip para fitToPage (Letter)
+ * y descarga el archivo resultante mediante Blob en el navegador.
+ */
+async function descargarWorkbookParcheado(wb: XLSX.WorkBook, filename: string): Promise<Uint8Array> {
+  const rawData = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const zip = await JSZip.loadAsync(rawData);
+
+  // Leer mapeo de hojas en xl/workbook.xml y xl/_rels/workbook.xml.rels
+  const wbXml = (await zip.file('xl/workbook.xml')?.async('text')) || '';
+  const relsXml = (await zip.file('xl/_rels/workbook.xml.rels')?.async('text')) || '';
+
+  const sheetRegex = /<sheet\s+[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"[^>]*\/?>|<sheet\s+[^>]*r:id="([^"]+)"[^>]*name="([^"]+)"[^>]*\/?>/g;
+  let match: RegExpExecArray | null;
+  const sheetRIds = new Map<string, string>();
+  while ((match = sheetRegex.exec(wbXml)) !== null) {
+    const name = match[1] || match[4];
+    const rId = match[2] || match[3];
+    if (name && rId) {
+      sheetRIds.set(rId, name);
+    }
+  }
+
+  const relRegex = /<Relationship\s+[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g;
+  const sheetFiles = new Map<string, string>();
+  while ((match = relRegex.exec(relsXml)) !== null) {
+    const rId = match[1];
+    const target = match[2];
+    if (sheetRIds.has(rId)) {
+      const sheetName = sheetRIds.get(rId)!;
+      const zipPath = target.startsWith('xl/') ? target : `xl/${target}`;
+      sheetFiles.set(sheetName, zipPath);
+    }
+  }
+
+  // Fallback si alguna hoja no fue resuelta en rels
+  wb.SheetNames.forEach((name, index) => {
+    if (!sheetFiles.has(name)) {
+      sheetFiles.set(name, `xl/worksheets/sheet${index + 1}.xml`);
+    }
+  });
+
+  // Parchear cada hoja según su tipo
+  for (const [sheetName, zipPath] of sheetFiles.entries()) {
+    const file = zip.file(zipPath);
+    if (!file) continue;
+
+    let xml = await file.async('text');
+    // Para hojas diarias (MENU X): orientation="landscape" (orientación horizontal)
+    // Para hojas de entrega (ANA ACEVEDO, etc.): orientation="portrait" (orientación vertical)
+    const isMenuDiario = sheetName.trim().toUpperCase().startsWith('MENU');
+    const orientation = isMenuDiario ? 'landscape' : 'portrait';
+
+    xml = patchSheetXml(xml, orientation);
+    zip.file(zipPath, xml);
+  }
+
+  // Asegurar cualquier otro archivo sheet*.xml residual
+  const worksheetFiles = zip.file(/^xl\/worksheets\/sheet\d+\.xml$/);
+  for (const wsFile of worksheetFiles) {
+    let xml = await wsFile.async('text');
+    if (!xml.includes('pageSetup paperSize="1"')) {
+      xml = patchSheetXml(xml, 'portrait');
+      zip.file(wsFile.name, xml);
+    }
+  }
+
+  const modifiedBytes = await zip.generateAsync({
+    type: 'uint8array',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    const blob = new Blob([modifiedBytes as any], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  return modifiedBytes;
+}
+
+/**
+ * Genera el archivo Excel oficial para una semana (5 días + Hoja de la Madre Comunitaria)
+ * Estructura 100% idéntica a la plantilla oficial ICBF:
+ * - Hojas 1 a 5: "MENU 21", "MENU 22", ... (Landscape, Letter, 1 página)
+ * - Hoja final: Nombre de la Madre Comunitaria en MAYÚSCULAS (Portrait, Letter, 1 página)
+ */
+export async function generarExcelProyeccionYPlanilla(
   dias: DiaProyeccionExcel[],
   consolidado: ItemPlanillaExcel[],
   meta: MetadatosPlanillaExcel
-) {
+): Promise<Uint8Array> {
   const wb = XLSX.utils.book_new();
 
   // 1. GENERAR PESTAÑAS DIARIAS (MENU 21 a MENU 25 o según corresponda)
@@ -209,12 +342,12 @@ export function generarExcelProyeccionYPlanilla(
   const wsPlanilla = construirHojaMadreComunitaria(consolidado, meta);
   XLSX.utils.book_append_sheet(wb, wsPlanilla, nombreHojaMadre);
 
-  // 3. DESCARGAR ARCHIVO EXCEL
+  // 3. DESCARGAR ARCHIVO EXCEL PARCHEADO (Letter, fitToPage 1 página)
   const safeName = (meta.nombreUds || 'UDS').replace(/[^a-zA-Z0-9_-]/g, '_');
   const safeMadre = (meta.madreComunitaria || 'Madre').replace(/[^a-zA-Z0-9_-]/g, '_');
   const filename = `Planilla_Entrega_${safeName}_${safeMadre}_Menus_${meta.diasCicloTexto.replace(/[^a-zA-Z0-9_-]/g, '_')}.xlsx`;
 
-  XLSX.writeFile(wb, filename);
+  return await descargarWorkbookParcheado(wb, filename);
 }
 
 /**
@@ -222,10 +355,10 @@ export function generarExcelProyeccionYPlanilla(
  * Contiene todas las hojas diarias de los 25 días (MENU 1 a MENU 25)
  * y las 5 planillas oficiales de entrega de cada semana identificadas por semana.
  */
-export function generarExcelCicloCompleto(
+export async function generarExcelCicloCompleto(
   semanas: SemanaProyeccionExcel[],
   metaGlobal: MetadatosPlanillaExcel
-) {
+): Promise<Uint8Array> {
   const wb = XLSX.utils.book_new();
   const nombreMadreUpper = (metaGlobal.madreComunitaria || 'MADRE COMUNITARIA')
     .trim()
@@ -241,13 +374,12 @@ export function generarExcelCicloCompleto(
     });
 
     // B. Agregar la hoja de planilla oficial para esta semana
-    // Nombre: ej. "ANA ACEVEDO - S1" o "PLANILLA S1 - ANA ACEVEDO"
     const nombreHojaSemana = `${nombreMadreUpper.slice(0, 20)} - S${sem.numeroSemana}`.slice(0, 31);
     const wsPlanilla = construirHojaMadreComunitaria(sem.consolidado, sem.meta);
     XLSX.utils.book_append_sheet(wb, wsPlanilla, nombreHojaSemana);
   });
 
-  // 2. Opcional: Hoja de Consolidado Total del Ciclo Completo (5 Semanas)
+  // 2. Consolidado Total del Ciclo Completo (5 Semanas)
   const mapaCicloCompleto = new Map<string, number>();
   semanas.forEach((sem) => {
     sem.consolidado.forEach((prod) => {
@@ -280,12 +412,14 @@ export function generarExcelCicloCompleto(
 
   const wsConsolidadoCiclo = XLSX.utils.aoa_to_sheet(consolidadoCicloRows);
   wsConsolidadoCiclo['!cols'] = [{ wch: 4 }, { wch: 55 }, { wch: 30 }, { wch: 20 }];
+  wsConsolidadoCiclo['!pageSetup'] = { paperSize: 1, orientation: 'portrait', fitToWidth: 1, fitToHeight: 1 };
+  wsConsolidadoCiclo['!margins'] = { left: 0.4, right: 0.4, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 };
   XLSX.utils.book_append_sheet(wb, wsConsolidadoCiclo, 'CONSOLIDADO CICLO 5 SEM');
 
-  // 3. Descargar archivo
+  // 3. Descargar archivo parcheado
   const safeName = (metaGlobal.nombreUds || 'UDS').replace(/[^a-zA-Z0-9_-]/g, '_');
   const safeMadre = (metaGlobal.madreComunitaria || 'Madre').replace(/[^a-zA-Z0-9_-]/g, '_');
   const filename = `Proyeccion_Compras_CicloCompleto_5Semanas_${safeName}_${safeMadre}.xlsx`;
 
-  XLSX.writeFile(wb, filename);
+  return await descargarWorkbookParcheado(wb, filename);
 }

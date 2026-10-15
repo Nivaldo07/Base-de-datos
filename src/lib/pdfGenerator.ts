@@ -361,14 +361,14 @@ function dibujarPaginaPlanillaEntrega(
 
   // 2. Encabezado institucional estrictamente centrado y acotado a maxWidth: 125
   doc.setTextColor(15, 23, 42);
-  doc.setFontSize(11);
+  doc.setFontSize(10.5);
   doc.setFont('helvetica', 'bold');
-  doc.text('PLANILLA DE ENTREGA DE ALIMENTOS', headerX, 13, { align: 'center', maxWidth: maxHeaderWidth });
+  doc.text('PLANILLA DE ENTREGA DE ALIMENTOS', headerX, 11, { align: 'center', maxWidth: maxHeaderWidth });
 
-  doc.setFontSize(7.5);
+  doc.setFontSize(7.2);
   doc.setFont('helvetica', 'bold');
-  let currentY = 17.5;
-  const lineGap = 4.0;
+  let currentY = 15.0;
+  const lineGap = 3.2;
 
   const lineasEncabezado = [
     `ENTIDAD ADMINISTRADORA DEL SERVICIO: ${meta.eas || 'ASOCIACION DE FAMILIA DE HCB DE CAIMITO-SUCRE'}`,
@@ -386,18 +386,25 @@ function dibujarPaginaPlanillaEntrega(
   }
 
   // 3. Declaración Legal Oficial Dinámica
-  let y = Math.max(currentY + 2, 45);
+  // Recuadro legal compacto: y = 35, altura 9 mm, terminando en y ≈ 44.
+  const legalY = 35;
+  const legalHeight = 9;
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(14, y, pageWidth - 28, 14, 2, 2, 'F');
-  doc.setFontSize(7.5);
+  doc.roundedRect(14, legalY, pageWidth - 28, legalHeight, 1.5, 1.5, 'F');
+  doc.setFontSize(6.8);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(30, 41, 59);
 
   const textoLegal = `El día ${meta.fechaEntrega || '26 del mes 09 del año 2026'} se hizo la entrega a la madre comunitaria los productos alimenticos establecidos en la minuta patrón y lista de compra, para la preparación de los alimentos de los niños y niñas beneficiarios de la modalidad HCB; los cuales se relacionan a continuación: menú ${meta.diasCicloTexto || '21 - 25'}, semana del ${meta.fechaInicio || '28 de septiembre'} hasta el ${meta.fechaFin || '2 de octubre de 2026'}`;
-  doc.text(textoLegal, 17, y + 4.5, { maxWidth: pageWidth - 34 });
-  y += 18;
+  doc.text(textoLegal, 16.5, legalY + 2.8, { maxWidth: pageWidth - 33, lineHeightFactor: 1.15 });
 
   // 4. Tabla de Productos Entregados (con encabezado verde #a9d08e oficial de la muestra ICBF)
+  // Inicia en y = 46. Dimensionamiento dinámico según el número de ítems:
+  const isDense = items.length > 25;
+  const tableFontSize = isDense ? 6.5 : 7.2;
+  const tableCellPadding = isDense ? 0.7 : 1.2;
+  const tableMinCellHeight = isDense ? 3.5 : 4.2;
+
   const bodyRows = items.map((it, idx) => [
     `${idx + 1}`,
     it.producto,
@@ -418,7 +425,8 @@ function dibujarPaginaPlanillaEntrega(
   ];
 
   autoTable(doc, {
-    startY: y,
+    startY: 46,
+    pageBreak: 'avoid',
     head: [['N°', 'PRODUCTO', 'UNIDAD DE MEDIDA ( GRAMOS- ML)', 'EQUIVALENTE', 'ESTADO']],
     body: bodyRows,
     foot: footRows,
@@ -427,16 +435,25 @@ function dibujarPaginaPlanillaEntrega(
       fillColor: [169, 208, 142], // Verde pastel oficial #a9d08e (idéntico a la muestra ICBF)
       textColor: [0, 0, 0], 
       fontStyle: 'bold', 
-      fontSize: 8,
-      halign: 'center'
+      fontSize: isDense ? 6.8 : 7.2,
+      halign: 'center',
+      minCellHeight: 4.5,
+      cellPadding: isDense ? 0.8 : 1.2,
     },
     footStyles: {
       fillColor: [241, 245, 249],
       textColor: [15, 23, 42],
       fontStyle: 'bold',
-      fontSize: 8,
+      fontSize: isDense ? 6.8 : 7.2,
+      minCellHeight: 4.5,
+      cellPadding: isDense ? 0.8 : 1.2,
     },
-    styles: { fontSize: 7.5, cellPadding: 2, minCellHeight: 5.5, textColor: [30, 41, 59] },
+    styles: {
+      fontSize: tableFontSize,
+      cellPadding: tableCellPadding,
+      minCellHeight: tableMinCellHeight,
+      textColor: [30, 41, 59],
+    },
     columnStyles: {
       0: { cellWidth: 10, halign: 'center' },
       1: { cellWidth: 95 },
@@ -444,24 +461,21 @@ function dibujarPaginaPlanillaEntrega(
       3: { cellWidth: 22, halign: 'right' },
       4: { cellWidth: 20, halign: 'center' },
     },
-    margin: { left: 14, right: 14 },
+    margin: { left: 14.45, right: 14.45 },
+    tableWidth: 187,
   });
 
-  const finalY = (doc as any).lastAutoTable.finalY || 230;
-  let signatureY = finalY + 14;
-
-  // Si no cabe en la misma página, añadir nueva página
-  if (signatureY > pageHeight - 35) {
-    doc.addPage();
-    signatureY = 40;
-  }
+  const finalY = (doc as any).lastAutoTable?.finalY || 200;
+  // Bloque de firmas: fijado en signatureY = Math.max(finalY + 8, pageHeight - 34) (alrededor de y = 246-248 mm), con líneas y textos en fontSize = 7.5 pt.
+  // Sin llamada a doc.addPage() para garantizar que quepa en 1 sola hoja de tamaño Carta.
+  const signatureY = Math.max(finalY + 8, pageHeight - 34);
 
   // 5. Bloque de Firmas Oficiales
   doc.setLineWidth(0.4);
   doc.setDrawColor(100, 116, 139);
 
   doc.line(20, signatureY, 95, signatureY);
-  doc.setFontSize(8);
+  doc.setFontSize(7.5);
   doc.setTextColor(30, 41, 59);
   doc.setFont('helvetica', 'bold');
   doc.text('RECIBIO A SATISFACCION', 57, signatureY + 4, { align: 'center' });
